@@ -75,6 +75,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Links
 
-- [GitHub Repository](https://github.com/yourusername/github-guide-tool)
-- [Issue Tracker](https://github.com/yourusername/github-guide-tool/issues)
-- [Releases](https://github.com/yourusername/github-guide-tool/releases)
+- [GitHub Repository](https://github.com/alexanderkinging/github-guide-tool)
+- [Issue Tracker](https://github.com/alexanderkinging/github-guide-tool/issues)
+- [Releases](https://github.com/alexanderkinging/github-guide-tool/releases)

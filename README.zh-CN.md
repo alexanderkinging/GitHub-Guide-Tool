@@ -2,7 +2,7 @@
 
 > 一个 Chrome 浏览器插件，通过 AI 自动生成项目文档，帮助你快速理解 GitHub 开源项目。
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/yourusername/github-guide-tool)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/alexanderkinging/github-guide-tool)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 [English](README.md) | [中文](README.zh-CN.md)
@@ -35,7 +35,7 @@ GitHub 仓库 → 代码骨架提取 → AI 分析 → 格式化指南
 
 ### 方式一：从 Release 安装（推荐）
 
-1. 从 [Releases](https://github.com/yourusername/github-guide-tool/releases) 下载最新的 `github-guide-tool.zip`
+1. 从 [Releases](https://github.com/alexanderkinging/github-guide-tool/releases) 下载最新的 `github-guide-tool.zip`
 2. 解压文件，得到 `dist` 文件夹
 3. 打开 Chrome 浏览器，访问 `chrome://extensions/`
 4. 开启右上角的 **开发者模式**
@@ -46,7 +46,7 @@ GitHub 仓库 → 代码骨架提取 → AI 分析 → 格式化指南
 
 ```bash
 # 克隆仓库
-git clone https://github.com/yourusername/github-guide-tool.git
+git clone https://github.com/alexanderkinging/github-guide-tool.git
 cd github-guide-tool
 
 # 安装依赖

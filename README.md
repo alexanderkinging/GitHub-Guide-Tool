@@ -2,7 +2,7 @@
 
 > A Chrome extension that helps you quickly understand GitHub open-source projects by generating AI-powered project documentation.
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/yourusername/github-guide-tool)
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/alexanderkinging/github-guide-tool)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 [English](README.md) | [中文](README.zh-CN.md)
@@ -35,7 +35,7 @@ GitHub Repository → Code Skeleton Extraction → AI Analysis → Formatted Gui
 
 ### Option 1: Install from Release (Recommended)
 
-1. Download the latest `github-guide-tool.zip` from [Releases](https://github.com/yourusername/github-guide-tool/releases)
+1. Download the latest `github-guide-tool.zip` from [Releases](https://github.com/alexanderkinging/github-guide-tool/releases)
 2. Unzip the file to get the `dist` folder
 3. Open Chrome and navigate to `chrome://extensions/`
 4. Enable **Developer mode** (toggle in top-right corner)
@@ -46,7 +46,7 @@ GitHub Repository → Code Skeleton Extraction → AI Analysis → Formatted Gui
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/github-guide-tool.git
+git clone https://github.com/alexanderkinging/github-guide-tool.git
 cd github-guide-tool
 
 # Install dependencies
