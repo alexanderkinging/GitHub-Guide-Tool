@@ -79,7 +79,7 @@ export interface CodeSkeleton {
 }
 
 // AI Service Types
-export type AIProvider = 'claude' | 'openai' | 'siliconflow';
+export type AIProvider = 'claude' | 'openai' | 'siliconflow' | 'bigmodel';
 
 export interface AIConfig {
   provider: AIProvider;
@@ -125,9 +125,11 @@ export interface StorageSettings {
   claudeApiKey?: string;
   openaiApiKey?: string;
   siliconflowApiKey?: string;
+  bigmodelApiKey?: string;
   claudeModel?: string;
   openaiModel?: string;
   siliconflowModel?: string;
+  bigmodelModel?: string;
 }
 
 export interface CachedAnalysis {

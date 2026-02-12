@@ -15,9 +15,11 @@ export default function Settings({ settings, onSave, onCancel }: SettingsProps) 
     claudeApiKey: settings?.claudeApiKey || '',
     openaiApiKey: settings?.openaiApiKey || '',
     siliconflowApiKey: settings?.siliconflowApiKey || '',
+    bigmodelApiKey: settings?.bigmodelApiKey || '',
     claudeModel: settings?.claudeModel || '',
     openaiModel: settings?.openaiModel || '',
     siliconflowModel: settings?.siliconflowModel || '',
+    bigmodelModel: settings?.bigmodelModel || '',
   });
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -29,21 +31,27 @@ export default function Settings({ settings, onSave, onCancel }: SettingsProps) 
     ? formData.claudeApiKey
     : formData.aiProvider === 'openai'
     ? formData.openaiApiKey
-    : formData.siliconflowApiKey;
+    : formData.aiProvider === 'siliconflow'
+    ? formData.siliconflowApiKey
+    : formData.bigmodelApiKey;
 
   const currentModel = formData.aiProvider === 'claude'
     ? formData.claudeModel
     : formData.aiProvider === 'openai'
     ? formData.openaiModel
-    : formData.siliconflowModel;
+    : formData.aiProvider === 'siliconflow'
+    ? formData.siliconflowModel
+    : formData.bigmodelModel;
 
   const setCurrentApiKey = (value: string) => {
     if (formData.aiProvider === 'claude') {
       setFormData({ ...formData, claudeApiKey: value });
     } else if (formData.aiProvider === 'openai') {
       setFormData({ ...formData, openaiApiKey: value });
-    } else {
+    } else if (formData.aiProvider === 'siliconflow') {
       setFormData({ ...formData, siliconflowApiKey: value });
+    } else {
+      setFormData({ ...formData, bigmodelApiKey: value });
     }
   };
 
@@ -52,8 +60,10 @@ export default function Settings({ settings, onSave, onCancel }: SettingsProps) 
       setFormData({ ...formData, claudeModel: value });
     } else if (formData.aiProvider === 'openai') {
       setFormData({ ...formData, openaiModel: value });
-    } else {
+    } else if (formData.aiProvider === 'siliconflow') {
       setFormData({ ...formData, siliconflowModel: value });
+    } else {
+      setFormData({ ...formData, bigmodelModel: value });
     }
   };
 
@@ -87,12 +97,13 @@ export default function Settings({ settings, onSave, onCancel }: SettingsProps) 
           <option value="claude">Claude (Anthropic)</option>
           <option value="openai">OpenAI</option>
           <option value="siliconflow">SiliconFlow</option>
+          <option value="bigmodel">BigModel (智谱AI)</option>
         </select>
       </div>
 
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-1">
-          {formData.aiProvider === 'claude' ? 'Claude' : formData.aiProvider === 'openai' ? 'OpenAI' : 'SiliconFlow'} API Key
+          {formData.aiProvider === 'claude' ? 'Claude' : formData.aiProvider === 'openai' ? 'OpenAI' : formData.aiProvider === 'siliconflow' ? 'SiliconFlow' : 'BigModel'} API Key
         </label>
         <input
           type="password"
@@ -101,8 +112,8 @@ export default function Settings({ settings, onSave, onCancel }: SettingsProps) 
           placeholder={
             formData.aiProvider === 'claude'
               ? 'sk-ant-xxxxxxxxxxxx'
-              : formData.aiProvider === 'openai'
-              ? 'sk-xxxxxxxxxxxx'
+              : formData.aiProvider === 'bigmodel'
+              ? 'xxxxxxxx.xxxxxxxx'
               : 'sk-xxxxxxxxxxxx'
           }
           className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"

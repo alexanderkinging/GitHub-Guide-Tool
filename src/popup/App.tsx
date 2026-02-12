@@ -59,7 +59,8 @@ export default function App() {
   const hasApiKey = settings && (
     (settings.aiProvider === 'claude' && settings.claudeApiKey) ||
     (settings.aiProvider === 'openai' && settings.openaiApiKey) ||
-    (settings.aiProvider === 'siliconflow' && settings.siliconflowApiKey)
+    (settings.aiProvider === 'siliconflow' && settings.siliconflowApiKey) ||
+    (settings.aiProvider === 'bigmodel' && settings.bigmodelApiKey)
   );
 
   if (loading) {

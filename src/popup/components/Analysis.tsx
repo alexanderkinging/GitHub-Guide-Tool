@@ -94,13 +94,17 @@ export default function Analysis({ owner, repo, settings }: AnalysisProps) {
         ? settings.claudeApiKey
         : settings.aiProvider === 'openai'
         ? settings.openaiApiKey
-        : settings.siliconflowApiKey;
+        : settings.aiProvider === 'siliconflow'
+        ? settings.siliconflowApiKey
+        : settings.bigmodelApiKey;
 
       const model = settings.aiProvider === 'claude'
         ? settings.claudeModel
         : settings.aiProvider === 'openai'
         ? settings.openaiModel
-        : settings.siliconflowModel;
+        : settings.aiProvider === 'siliconflow'
+        ? settings.siliconflowModel
+        : settings.bigmodelModel;
 
       if (!apiKey) {
         throw new Error('API key not configured');
