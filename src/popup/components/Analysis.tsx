@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Light as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -12,11 +12,8 @@ import rust from 'react-syntax-highlighter/dist/esm/languages/hljs/rust';
 import java from 'react-syntax-highlighter/dist/esm/languages/hljs/java';
 import cpp from 'react-syntax-highlighter/dist/esm/languages/hljs/cpp';
 import { githubGist } from 'react-syntax-highlighter/dist/esm/styles/hljs';
-import type { StorageSettings, RepoInfo, AnalysisResult, ChunkedAnalysisProgress } from '@/types';
-import { githubAPI } from '@/lib/github';
-import { extractCodeSkeleton, determineProjectSize } from '@/lib/analyzer';
-import { analyzeWithAI, checkNeedsChunking, analyzeWithChunking } from '@/lib/ai';
-import { getTemplateById } from '@/lib/prompts/presets';
+import type { StorageSettings, AnalysisResult, AnalysisTask, AnalysisStage } from '@/types';
+import { determineProjectSize } from '@/lib/analyzer';
 
 // Register only needed languages
 SyntaxHighlighter.registerLanguage('javascript', js);
@@ -56,9 +53,7 @@ interface AnalysisProps {
   onOpenSettings?: () => void;
 }
 
-type Stage = 'idle' | 'fetching' | 'extracting' | 'analyzing' | 'complete' | 'error';
-
-const STAGE_LABELS: Record<Stage, string> = {
+const STAGE_LABELS: Record<AnalysisStage, string> = {
   idle: 'Ready',
   fetching: 'Fetching repository info...',
   extracting: 'Extracting code skeleton...',
@@ -66,6 +61,8 @@ const STAGE_LABELS: Record<Stage, string> = {
   complete: 'Analysis complete',
   error: 'Error occurred',
 };
+
+const POLL_INTERVAL = 500; // 500ms
 
 // GitHub Token 创建 URL
 const GITHUB_TOKEN_URL = 'https://github.com/settings/tokens/new?scopes=repo&description=GitHub%20Guide%20Tool';
@@ -83,216 +80,161 @@ function getDisplayError(errorMessage: string): string {
   return errorMessage;
 }
 
-export default function Analysis({ owner, repo, settings, onOpenSettings }: AnalysisProps) {
-  const [stage, setStage] = useState<Stage>('idle');
-  const [progress, setProgress] = useState(0);
-  const [repoInfo, setRepoInfo] = useState<RepoInfo | null>(null);
-  const [analysis, setAnalysis] = useState('');
-  const [error, setError] = useState<string | null>(null);
+export default function Analysis({ owner, repo, settings: _settings, onOpenSettings }: AnalysisProps) {
+  const [task, setTask] = useState<AnalysisTask | null>(null);
   const [cached, setCached] = useState(false);
   const [feishuSaving, setFeishuSaving] = useState(false);
-  const [chunkProgress, setChunkProgress] = useState<ChunkedAnalysisProgress | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
   const analysisRef = useRef<HTMLDivElement>(null);
+  const pollingRef = useRef<number | null>(null);
+  const lastAnalysisLengthRef = useRef(0);
 
-  // Check for cached analysis on mount
+  // Derived state from task
+  const stage: AnalysisStage = task?.stage || 'idle';
+  const progress = task?.progress || 0;
+  const repoInfo = task?.repoInfo || null;
+  const analysis = task?.analysis || '';
+  const error = localError || task?.error || null;
+  const chunkProgress = task?.chunkProgress || null;
+
+  // Poll for analysis state
+  const pollState = useCallback(async () => {
+    try {
+      const response = await chrome.runtime.sendMessage({
+        type: 'GET_ANALYSIS_STATE',
+        payload: { owner, repo },
+      });
+
+      if (response.success && response.data) {
+        const newTask = response.data as AnalysisTask;
+        setTask(newTask);
+
+        // Auto-scroll when new content arrives
+        if (newTask.analysis.length > lastAnalysisLengthRef.current && analysisRef.current) {
+          analysisRef.current.scrollTop = analysisRef.current.scrollHeight;
+        }
+        lastAnalysisLengthRef.current = newTask.analysis.length;
+
+        // Stop polling if complete or error
+        if (newTask.stage === 'complete' || newTask.stage === 'error') {
+          if (pollingRef.current) {
+            clearInterval(pollingRef.current);
+            pollingRef.current = null;
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Poll state error:', err);
+    }
+  }, [owner, repo]);
+
+  // Start polling
+  const startPolling = useCallback(() => {
+    if (pollingRef.current) return;
+    pollingRef.current = window.setInterval(pollState, POLL_INTERVAL);
+    pollState(); // Immediate first poll
+  }, [pollState]);
+
+  // Stop polling
+  const stopPolling = useCallback(() => {
+    if (pollingRef.current) {
+      clearInterval(pollingRef.current);
+      pollingRef.current = null;
+    }
+  }, []);
+
+  // Check for existing state or cache on mount
   useEffect(() => {
     let isMounted = true;
 
-    async function checkCache() {
+    async function initialize() {
       try {
-        const response = await chrome.runtime.sendMessage({
+        // First check for ongoing analysis
+        const stateResponse = await chrome.runtime.sendMessage({
+          type: 'GET_ANALYSIS_STATE',
+          payload: { owner, repo },
+        });
+
+        if (isMounted && stateResponse.success && stateResponse.data) {
+          const existingTask = stateResponse.data as AnalysisTask;
+          setTask(existingTask);
+          lastAnalysisLengthRef.current = existingTask.analysis.length;
+
+          // If still in progress, start polling
+          if (existingTask.stage !== 'complete' && existingTask.stage !== 'error' && existingTask.stage !== 'idle') {
+            startPolling();
+          }
+          return;
+        }
+
+        // Then check cache
+        const cacheResponse = await chrome.runtime.sendMessage({
           type: 'CHECK_CACHE',
           payload: { owner, repo },
         });
-        if (isMounted && response.success && response.data) {
-          const cachedResult = response.data.result as AnalysisResult;
-          setRepoInfo(cachedResult.repoInfo);
-          setAnalysis(cachedResult.aiAnalysis);
-          setStage('complete');
+
+        if (isMounted && cacheResponse.success && cacheResponse.data) {
+          const cachedResult = cacheResponse.data.result as AnalysisResult;
+          setTask({
+            id: `${owner}/${repo}`,
+            owner,
+            repo,
+            stage: 'complete',
+            progress: 100,
+            analysis: cachedResult.aiAnalysis,
+            repoInfo: cachedResult.repoInfo,
+            chunkProgress: null,
+            error: null,
+            startedAt: cachedResult.generatedAt,
+            lastUpdatedAt: cachedResult.generatedAt,
+          });
           setCached(true);
         }
       } catch (err) {
         if (isMounted) {
-          console.error('Cache check error:', err);
+          console.error('Initialize error:', err);
         }
       }
     }
-    checkCache();
+
+    initialize();
 
     return () => {
       isMounted = false;
+      stopPolling();
     };
-  }, [owner, repo]);
+  }, [owner, repo, startPolling, stopPolling]);
 
   const startAnalysis = async () => {
-    setStage('fetching');
-    setProgress(0);
-    setError(null);
-    setAnalysis('');
     setCached(false);
-    setChunkProgress(null);
+    setLocalError(null);
+    lastAnalysisLengthRef.current = 0;
 
     try {
-      // Set GitHub token (explicitly clear if not configured)
-      githubAPI.setToken(settings.githubToken || null);
-
-      // Fetch repo info
-      setProgress(10);
-      const fetchedRepoInfo = await githubAPI.getRepoInfo(owner, repo);
-      setRepoInfo(fetchedRepoInfo);
-
-      // Extract skeleton
-      setStage('extracting');
-      setProgress(30);
-      const extractedSkeleton = await extractCodeSkeleton(fetchedRepoInfo, (_stage, p) => {
-        setProgress(30 + (p * 0.3));
+      const response = await chrome.runtime.sendMessage({
+        type: 'START_ANALYSIS',
+        payload: { owner, repo },
       });
 
-      // Get API key and model for current provider
-      const apiKey = settings.aiProvider === 'claude'
-        ? settings.claudeApiKey
-        : settings.aiProvider === 'openai'
-        ? settings.openaiApiKey
-        : settings.aiProvider === 'siliconflow'
-        ? settings.siliconflowApiKey
-        : settings.bigmodelApiKey;
-
-      const model = settings.aiProvider === 'claude'
-        ? settings.claudeModel
-        : settings.aiProvider === 'openai'
-        ? settings.openaiModel
-        : settings.aiProvider === 'siliconflow'
-        ? settings.siliconflowModel
-        : settings.bigmodelModel;
-
-      if (!apiKey) {
-        throw new Error('API key not configured');
-      }
-
-      // Get active prompt template
-      const activeTemplate = getTemplateById(
-        settings.activeTemplateId || 'preset-default',
-        settings.customTemplates
-      );
-
-      // Check if chunking is needed
-      const readmeLength = fetchedRepoInfo.readme?.length || 0;
-      const modelToUse = model || 'claude-sonnet-4-20250514';
-      const { needsChunking: useChunking, estimatedChunks } = checkNeedsChunking(
-        extractedSkeleton,
-        modelToUse,
-        readmeLength
-      );
-
-      // Start AI analysis with streaming
-      setStage('analyzing');
-      setProgress(60);
-
-      let fullAnalysis = '';
-
-      if (useChunking && estimatedChunks > 1) {
-        // Use chunked analysis for large codebases
-        await analyzeWithChunking(
-          settings.aiProvider,
-          apiKey,
-          modelToUse,
-          extractedSkeleton,
-          fetchedRepoInfo,
-          {
-            onToken: (token) => {
-              fullAnalysis += token;
-              setAnalysis(fullAnalysis);
-              if (analysisRef.current) {
-                analysisRef.current.scrollTop = analysisRef.current.scrollHeight;
-              }
-            },
-            onComplete: async (text) => {
-              setAnalysis(text);
-              setStage('complete');
-              setProgress(100);
-              setChunkProgress(null);
-
-              // Cache the result
-              try {
-                await chrome.runtime.sendMessage({
-                  type: 'SAVE_CACHE',
-                  payload: {
-                    owner,
-                    repo,
-                    result: {
-                      repoInfo: fetchedRepoInfo,
-                      skeleton: extractedSkeleton,
-                      aiAnalysis: text,
-                      generatedAt: Date.now(),
-                    },
-                  },
-                });
-              } catch (err) {
-                console.error('Cache save error:', err);
-              }
-            },
-            onError: (err) => {
-              throw err;
-            },
-          },
-          (progress) => {
-            setChunkProgress(progress);
-            // Update progress based on chunk progress
-            const chunkPercent = (progress.currentChunk / progress.totalChunks) * 100;
-            setProgress(60 + (chunkPercent * 0.35));
-          }
-        );
-      } else {
-        // Use standard analysis
-        await analyzeWithAI(
-          settings.aiProvider,
-          apiKey,
-          model,
-          extractedSkeleton,
-          fetchedRepoInfo,
-          {
-            onToken: (token) => {
-              fullAnalysis += token;
-              setAnalysis(fullAnalysis);
-              // Auto-scroll to bottom during streaming
-              if (analysisRef.current) {
-                analysisRef.current.scrollTop = analysisRef.current.scrollHeight;
-              }
-            },
-            onComplete: async (text) => {
-              setAnalysis(text);
-              setStage('complete');
-              setProgress(100);
-
-              // Cache the result
-              try {
-                await chrome.runtime.sendMessage({
-                  type: 'SAVE_CACHE',
-                  payload: {
-                    owner,
-                    repo,
-                    result: {
-                      repoInfo: fetchedRepoInfo,
-                      skeleton: extractedSkeleton,
-                      aiAnalysis: text,
-                      generatedAt: Date.now(),
-                    },
-                  },
-                });
-              } catch (err) {
-                console.error('Cache save error:', err);
-              }
-            },
-            onError: (err) => {
-              throw err;
-            },
-          },
-          activeTemplate
-        );
+      if (response.success && response.data) {
+        setTask(response.data as AnalysisTask);
+        startPolling();
       }
     } catch (err) {
-      setStage('error');
-      setError(err instanceof Error ? err.message : 'Unknown error occurred');
+      console.error('Start analysis error:', err);
+      setTask({
+        id: `${owner}/${repo}`,
+        owner,
+        repo,
+        stage: 'error',
+        progress: 0,
+        analysis: '',
+        repoInfo: null,
+        chunkProgress: null,
+        error: err instanceof Error ? err.message : 'Failed to start analysis',
+        startedAt: Date.now(),
+        lastUpdatedAt: Date.now(),
+      });
     }
   };
 
@@ -311,7 +253,7 @@ export default function Analysis({ owner, repo, settings, onOpenSettings }: Anal
       URL.revokeObjectURL(url);
     } catch (err) {
       console.error('Export error:', err);
-      setError('Failed to export Markdown file');
+      setLocalError('Failed to export Markdown file');
     }
   };
 
@@ -324,7 +266,7 @@ export default function Analysis({ owner, repo, settings, onOpenSettings }: Anal
     if (!analysis || feishuSaving) return;
 
     setFeishuSaving(true);
-    setError(null);
+    setLocalError(null);
 
     try {
       // Check login status first
@@ -333,7 +275,7 @@ export default function Analysis({ owner, repo, settings, onOpenSettings }: Anal
       });
 
       if (!loginCheck.success || !loginCheck.data?.isLoggedIn) {
-        setError('请先登录 feishu.cn');
+        setLocalError('请先登录 feishu.cn');
         return;
       }
 
@@ -351,10 +293,10 @@ export default function Analysis({ owner, repo, settings, onOpenSettings }: Anal
         // Open the created document
         window.open(result.url, '_blank');
       } else {
-        setError(result.error || '保存到飞书失败');
+        setLocalError(result.error || '保存到飞书失败');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : '保存到飞书失败');
+      setLocalError(err instanceof Error ? err.message : '保存到飞书失败');
     } finally {
       setFeishuSaving(false);
     }

@@ -28,8 +28,7 @@ npm-debug.log*
 *.tsbuildinfo
 
 # Claude Code
-.claude/*
-!.claude/CLAUDE.md
+.claude/
 
 # 临时文件
 .prompt.md

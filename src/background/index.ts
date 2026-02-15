@@ -1,6 +1,8 @@
-import type { StorageSettings, CachedAnalysis } from '@/types';
+import type { StorageSettings, CachedAnalysis, AnalysisTask, ChunkedAnalysisProgress } from '@/types';
 import { githubAPI } from '@/lib/github';
 import { extractCodeSkeleton } from '@/lib/analyzer';
+import { analyzeWithAI, checkNeedsChunking, analyzeWithChunking } from '@/lib/ai';
+import { getTemplateById } from '@/lib/prompts/presets';
 
 // Cache duration: 24 hours
 const CACHE_DURATION = 24 * 60 * 60 * 1000;
@@ -11,6 +13,14 @@ const MAX_STORAGE_BYTES = 4.5 * 1024 * 1024;
 // Storage keys
 const SETTINGS_KEY = 'settings';
 const CACHE_KEY = 'analysisCache';
+const ANALYSIS_STATE_KEY = 'analysisTaskState';
+
+// Analysis task management
+const ANALYSIS_TIMEOUT = 5 * 60 * 1000; // 5 minutes
+const THROTTLE_INTERVAL = 500; // 500ms
+
+let currentTask: AnalysisTask | null = null;
+let lastSaveTime = 0;
 
 // Feishu API
 const FEISHU_API_BASE = 'https://internal-api-space.feishu.cn';
@@ -319,6 +329,260 @@ async function clearCache(): Promise<void> {
   await chrome.storage.local.remove(CACHE_KEY);
 }
 
+// ============ Analysis Task Management ============
+
+// Save analysis state to session storage (throttled)
+async function saveAnalysisState(): Promise<void> {
+  if (!currentTask) return;
+
+  const now = Date.now();
+  if (now - lastSaveTime < THROTTLE_INTERVAL) return;
+
+  lastSaveTime = now;
+  currentTask.lastUpdatedAt = now;
+
+  await chrome.storage.session.set({ [ANALYSIS_STATE_KEY]: currentTask });
+}
+
+// Force save analysis state (bypass throttle)
+async function forceSaveAnalysisState(): Promise<void> {
+  if (!currentTask) return;
+  currentTask.lastUpdatedAt = Date.now();
+  lastSaveTime = Date.now();
+  await chrome.storage.session.set({ [ANALYSIS_STATE_KEY]: currentTask });
+}
+
+// Get analysis state from session storage
+async function getAnalysisState(): Promise<AnalysisTask | null> {
+  const result = await chrome.storage.session.get(ANALYSIS_STATE_KEY);
+  const task = result[ANALYSIS_STATE_KEY] as AnalysisTask | undefined;
+
+  if (!task) return null;
+
+  // Check for timeout
+  if (task.stage !== 'complete' && task.stage !== 'error' && task.stage !== 'idle') {
+    if (Date.now() - task.lastUpdatedAt > ANALYSIS_TIMEOUT) {
+      task.stage = 'error';
+      task.error = 'Analysis timed out. Please try again.';
+      await chrome.storage.session.set({ [ANALYSIS_STATE_KEY]: task });
+      currentTask = null;
+    }
+  }
+
+  return task;
+}
+
+// Clear analysis state
+async function clearAnalysisState(): Promise<void> {
+  currentTask = null;
+  await chrome.storage.session.remove(ANALYSIS_STATE_KEY);
+}
+
+// Update task state
+function updateTask(updates: Partial<AnalysisTask>): void {
+  if (!currentTask) return;
+  Object.assign(currentTask, updates);
+  saveAnalysisState(); // Throttled save
+}
+
+// Start analysis in background
+async function startBackgroundAnalysis(owner: string, repo: string): Promise<AnalysisTask> {
+  const taskId = `${owner}/${repo}`;
+
+  // Check if same task is already running
+  if (currentTask && currentTask.id === taskId &&
+      currentTask.stage !== 'complete' && currentTask.stage !== 'error' && currentTask.stage !== 'idle') {
+    return currentTask;
+  }
+
+  // Initialize new task
+  currentTask = {
+    id: taskId,
+    owner,
+    repo,
+    stage: 'fetching',
+    progress: 0,
+    analysis: '',
+    repoInfo: null,
+    chunkProgress: null,
+    error: null,
+    startedAt: Date.now(),
+    lastUpdatedAt: Date.now(),
+  };
+
+  await forceSaveAnalysisState();
+
+  // Run analysis asynchronously
+  runAnalysis(owner, repo).catch((err) => {
+    console.error('Analysis error:', err);
+    if (currentTask && currentTask.id === taskId) {
+      currentTask.stage = 'error';
+      currentTask.error = err instanceof Error ? err.message : 'Unknown error occurred';
+      forceSaveAnalysisState();
+    }
+  });
+
+  return currentTask;
+}
+
+// Run the actual analysis
+async function runAnalysis(owner: string, repo: string): Promise<void> {
+  const taskId = `${owner}/${repo}`;
+
+  try {
+    const settings = await getSettings();
+
+    // Set GitHub token
+    githubAPI.setToken(settings.githubToken || null);
+
+    // Fetch repo info
+    updateTask({ progress: 10 });
+    const fetchedRepoInfo = await githubAPI.getRepoInfo(owner, repo);
+    updateTask({ repoInfo: fetchedRepoInfo });
+
+    // Extract skeleton
+    updateTask({ stage: 'extracting', progress: 30 });
+    await forceSaveAnalysisState();
+
+    const extractedSkeleton = await extractCodeSkeleton(fetchedRepoInfo, (_stage, p) => {
+      updateTask({ progress: 30 + (p * 0.3) });
+    });
+
+    // Get API key and model
+    const apiKey = settings.aiProvider === 'claude'
+      ? settings.claudeApiKey
+      : settings.aiProvider === 'openai'
+      ? settings.openaiApiKey
+      : settings.aiProvider === 'siliconflow'
+      ? settings.siliconflowApiKey
+      : settings.bigmodelApiKey;
+
+    const model = settings.aiProvider === 'claude'
+      ? settings.claudeModel
+      : settings.aiProvider === 'openai'
+      ? settings.openaiModel
+      : settings.aiProvider === 'siliconflow'
+      ? settings.siliconflowModel
+      : settings.bigmodelModel;
+
+    if (!apiKey) {
+      throw new Error('API key not configured');
+    }
+
+    // Get active prompt template
+    const activeTemplate = getTemplateById(
+      settings.activeTemplateId || 'preset-default',
+      settings.customTemplates
+    );
+
+    // Check if chunking is needed
+    const readmeLength = fetchedRepoInfo.readme?.length || 0;
+    const modelToUse = model || 'claude-sonnet-4-20250514';
+    const { needsChunking: useChunking, estimatedChunks } = checkNeedsChunking(
+      extractedSkeleton,
+      modelToUse,
+      readmeLength
+    );
+
+    // Start AI analysis
+    updateTask({ stage: 'analyzing', progress: 60 });
+    await forceSaveAnalysisState();
+
+    let fullAnalysis = '';
+
+    if (useChunking && estimatedChunks > 1) {
+      // Chunked analysis
+      await analyzeWithChunking(
+        settings.aiProvider,
+        apiKey,
+        modelToUse,
+        extractedSkeleton,
+        fetchedRepoInfo,
+        {
+          onToken: (token) => {
+            if (currentTask?.id !== taskId) return;
+            fullAnalysis += token;
+            updateTask({ analysis: fullAnalysis });
+          },
+          onComplete: async (text) => {
+            if (currentTask?.id !== taskId) return;
+            updateTask({
+              analysis: text,
+              stage: 'complete',
+              progress: 100,
+              chunkProgress: null,
+            });
+            await forceSaveAnalysisState();
+
+            // Cache the result
+            await cacheAnalysis(taskId, {
+              repoInfo: fetchedRepoInfo,
+              skeleton: extractedSkeleton,
+              aiAnalysis: text,
+              generatedAt: Date.now(),
+            });
+          },
+          onError: (err) => {
+            throw err;
+          },
+        },
+        (progress: ChunkedAnalysisProgress) => {
+          if (currentTask?.id !== taskId) return;
+          const chunkPercent = (progress.currentChunk / progress.totalChunks) * 100;
+          updateTask({
+            chunkProgress: progress,
+            progress: 60 + (chunkPercent * 0.35),
+          });
+        }
+      );
+    } else {
+      // Standard analysis
+      await analyzeWithAI(
+        settings.aiProvider,
+        apiKey,
+        model,
+        extractedSkeleton,
+        fetchedRepoInfo,
+        {
+          onToken: (token) => {
+            if (currentTask?.id !== taskId) return;
+            fullAnalysis += token;
+            updateTask({ analysis: fullAnalysis });
+          },
+          onComplete: async (text) => {
+            if (currentTask?.id !== taskId) return;
+            updateTask({
+              analysis: text,
+              stage: 'complete',
+              progress: 100,
+            });
+            await forceSaveAnalysisState();
+
+            // Cache the result
+            await cacheAnalysis(taskId, {
+              repoInfo: fetchedRepoInfo,
+              skeleton: extractedSkeleton,
+              aiAnalysis: text,
+              generatedAt: Date.now(),
+            });
+          },
+          onError: (err) => {
+            throw err;
+          },
+        },
+        activeTemplate
+      );
+    }
+  } catch (err) {
+    if (currentTask?.id === taskId) {
+      currentTask.stage = 'error';
+      currentTask.error = err instanceof Error ? err.message : 'Unknown error occurred';
+      await forceSaveAnalysisState();
+    }
+    throw err;
+  }
+}
+
 // Message handler
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   handleMessage(message, sendResponse);
@@ -416,6 +680,37 @@ async function handleMessage(
         };
         const result = await saveToFeishu(markdown, title, sourceUrl);
         sendResponse(result);
+        break;
+      }
+
+      case 'START_ANALYSIS': {
+        const { owner, repo } = message.payload as { owner: string; repo: string };
+        const task = await startBackgroundAnalysis(owner, repo);
+        sendResponse({ success: true, data: task });
+        break;
+      }
+
+      case 'GET_ANALYSIS_STATE': {
+        const { owner, repo } = message.payload as { owner: string; repo: string };
+        const taskId = `${owner}/${repo}`;
+        const state = await getAnalysisState();
+        // Only return state if it matches the requested repo
+        if (state && state.id === taskId) {
+          sendResponse({ success: true, data: state });
+        } else {
+          sendResponse({ success: true, data: null });
+        }
+        break;
+      }
+
+      case 'CANCEL_ANALYSIS': {
+        const { owner, repo } = message.payload as { owner: string; repo: string };
+        const taskId = `${owner}/${repo}`;
+        if (currentTask && currentTask.id === taskId) {
+          currentTask = null;
+        }
+        await clearAnalysisState();
+        sendResponse({ success: true });
         break;
       }
 
