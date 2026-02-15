@@ -75,8 +75,12 @@ interface SettingsProps {
   onCancel: () => void;
 }
 
-export default function Settings({ settings, onSave, onCancel }: SettingsProps) {
-  const [formData, setFormData] = useState<StorageSettings>({
+// chrome.storage.session key for draft settings
+const DRAFT_KEY = 'settings-draft';
+
+// Get default form data from saved settings
+function getDefaultFormData(settings: StorageSettings | null): StorageSettings {
+  return {
     aiProvider: settings?.aiProvider || 'claude',
     githubToken: settings?.githubToken || '',
     claudeApiKey: settings?.claudeApiKey || '',
@@ -87,10 +91,32 @@ export default function Settings({ settings, onSave, onCancel }: SettingsProps) 
     openaiModel: settings?.openaiModel || '',
     siliconflowModel: settings?.siliconflowModel || '',
     bigmodelModel: settings?.bigmodelModel || '',
-  });
+  };
+}
+
+export default function Settings({ settings, onSave, onCancel }: SettingsProps) {
+  const [formData, setFormData] = useState<StorageSettings>(() => getDefaultFormData(settings));
+  const [draftLoaded, setDraftLoaded] = useState(false);
 
   const [tokenStatus, setTokenStatus] = useState<TokenPermissions | null>(null);
   const [checkingToken, setCheckingToken] = useState(false);
+
+  // Load draft from chrome.storage.session on mount
+  useEffect(() => {
+    chrome.storage.session.get(DRAFT_KEY, (result) => {
+      if (result[DRAFT_KEY]) {
+        setFormData(result[DRAFT_KEY]);
+      }
+      setDraftLoaded(true);
+    });
+  }, []);
+
+  // Save draft to chrome.storage.session when form data changes (after initial load)
+  useEffect(() => {
+    if (draftLoaded) {
+      chrome.storage.session.set({ [DRAFT_KEY]: formData });
+    }
+  }, [formData, draftLoaded]);
 
   // Check token when it changes (using local function, not global githubAPI)
   useEffect(() => {
@@ -112,7 +138,15 @@ export default function Settings({ settings, onSave, onCancel }: SettingsProps) 
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    // Clear draft after successful save
+    chrome.storage.session.remove(DRAFT_KEY);
     onSave(formData);
+  };
+
+  const handleCancel = () => {
+    // Clear draft on cancel
+    chrome.storage.session.remove(DRAFT_KEY);
+    onCancel();
   };
 
   const currentApiKey = formData.aiProvider === 'claude'
@@ -274,7 +308,7 @@ export default function Settings({ settings, onSave, onCancel }: SettingsProps) 
       <div className="flex gap-3 pt-2">
         <button
           type="button"
-          onClick={onCancel}
+          onClick={handleCancel}
           className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm font-medium"
         >
           Cancel

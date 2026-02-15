@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "GitHub Guide Tool",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "Analyze GitHub projects and generate documentation with AI assistance",
   "permissions": [
     "storage",
