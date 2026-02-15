@@ -57,6 +57,34 @@ const PY_FUNCTION_REGEX = /def\s+(\w+)\s*\(([^)]*)\)(?:\s*->\s*([^:]+))?:/g;
 // Python class regex
 const PY_CLASS_REGEX = /class\s+(\w+)(?:\s*\(([^)]*)\))?:/g;
 
+// Go function regex: func name(params) returnType or func (receiver) name(params) returnType
+const GO_FUNCTION_REGEX = /func\s+(?:\([^)]+\)\s+)?(\w+)\s*\(([^)]*)\)(?:\s*\(([^)]+)\)|\s+([^{\n]+))?/g;
+// Go struct regex: type Name struct
+const GO_STRUCT_REGEX = /type\s+(\w+)\s+struct\s*\{/g;
+// Go interface regex: type Name interface
+const GO_INTERFACE_REGEX = /type\s+(\w+)\s+interface\s*\{/g;
+
+// Rust function regex: pub fn name(params) -> ReturnType
+const RUST_FUNCTION_REGEX = /(?:pub\s+)?(?:async\s+)?fn\s+(\w+)\s*(?:<[^>]*>)?\s*\(([^)]*)\)(?:\s*->\s*([^{\n]+))?/g;
+// Rust struct regex: pub struct Name
+const RUST_STRUCT_REGEX = /(?:pub\s+)?struct\s+(\w+)(?:<[^>]*>)?/g;
+// Rust trait regex: pub trait Name
+const RUST_TRAIT_REGEX = /(?:pub\s+)?trait\s+(\w+)(?:<[^>]*>)?/g;
+
+// Java method regex: public void name(params)
+const JAVA_METHOD_REGEX = /(?:public|private|protected)?\s*(?:static\s+)?(?:final\s+)?(?:synchronized\s+)?(?:<[^>]*>\s+)?(\w+)\s+(\w+)\s*\(([^)]*)\)/g;
+// Java class regex: public class Name extends Parent implements Interface
+const JAVA_CLASS_REGEX = /(?:public\s+)?(?:abstract\s+)?(?:final\s+)?class\s+(\w+)(?:<[^>]*>)?(?:\s+extends\s+(\w+))?(?:\s+implements\s+([^{]+))?/g;
+// Java interface regex: public interface Name
+const JAVA_INTERFACE_REGEX = /(?:public\s+)?interface\s+(\w+)(?:<[^>]*>)?(?:\s+extends\s+([^{]+))?/g;
+
+// C++ function regex: ReturnType name(params)
+const CPP_FUNCTION_REGEX = /(?:virtual\s+)?(?:static\s+)?(?:inline\s+)?(?:const\s+)?(\w+(?:\s*[*&])?)\s+(\w+)\s*\(([^)]*)\)(?:\s*const)?(?:\s*override)?(?:\s*=\s*0)?/g;
+// C++ class regex: class Name : public Parent
+const CPP_CLASS_REGEX = /class\s+(\w+)(?:\s*:\s*(?:public|private|protected)\s+(\w+))?/g;
+// C++ struct regex
+const CPP_STRUCT_REGEX = /struct\s+(\w+)(?:\s*:\s*(?:public|private|protected)\s+(\w+))?/g;
+
 export function determineProjectSize(fileCount: number): ProjectSize {
   if (fileCount < 50) return 'small';
   if (fileCount <= 200) return 'medium';
@@ -156,7 +184,7 @@ function findAnalyzableFiles(fileTree: FileNode[], maxFiles: number): string[] {
     for (const node of nodes) {
       if (node.type === 'file') {
         const ext = node.name.split('.').pop()?.toLowerCase();
-        if (['ts', 'tsx', 'js', 'jsx', 'py'].includes(ext || '')) {
+        if (['ts', 'tsx', 'js', 'jsx', 'py', 'go', 'rs', 'java', 'cpp', 'cc', 'cxx', 'c', 'h', 'hpp'].includes(ext || '')) {
           if (inPriorityDir) {
             priorityFiles.push(node.path);
           } else {
@@ -262,7 +290,7 @@ function parseConfig(content: string, filename: string): ProjectConfig {
   return { type: 'unknown', raw: content };
 }
 
-function detectLanguage(path: string): 'typescript' | 'javascript' | 'python' | 'unknown' {
+function detectLanguage(path: string): 'typescript' | 'javascript' | 'python' | 'go' | 'rust' | 'java' | 'cpp' | 'unknown' {
   const ext = path.split('.').pop()?.toLowerCase();
   switch (ext) {
     case 'ts':
@@ -273,6 +301,19 @@ function detectLanguage(path: string): 'typescript' | 'javascript' | 'python' | 
       return 'javascript';
     case 'py':
       return 'python';
+    case 'go':
+      return 'go';
+    case 'rs':
+      return 'rust';
+    case 'java':
+      return 'java';
+    case 'cpp':
+    case 'cc':
+    case 'cxx':
+    case 'c':
+    case 'h':
+    case 'hpp':
+      return 'cpp';
     default:
       return 'unknown';
   }
@@ -328,6 +369,65 @@ function extractFunctions(content: string, language: string): FunctionSignature[
         });
       }
     }
+  } else if (language === 'go') {
+    let match;
+    while ((match = GO_FUNCTION_REGEX.exec(content)) !== null) {
+      const lineNumber = content.substring(0, match.index).split('\n').length;
+      // Go exports are determined by capitalization
+      const isExported = /^[A-Z]/.test(match[1]);
+      const returnType = match[3]?.trim() || match[4]?.trim();
+      functions.push({
+        name: match[1],
+        params: match[2].trim(),
+        returnType,
+        isAsync: false,
+        isExported,
+        line: lineNumber,
+      });
+    }
+  } else if (language === 'rust') {
+    let match;
+    while ((match = RUST_FUNCTION_REGEX.exec(content)) !== null) {
+      const lineNumber = content.substring(0, match.index).split('\n').length;
+      functions.push({
+        name: match[1],
+        params: match[2].trim(),
+        returnType: match[3]?.trim(),
+        isAsync: match[0].includes('async'),
+        isExported: match[0].includes('pub'),
+        line: lineNumber,
+      });
+    }
+  } else if (language === 'java') {
+    let match;
+    while ((match = JAVA_METHOD_REGEX.exec(content)) !== null) {
+      const lineNumber = content.substring(0, match.index).split('\n').length;
+      // Skip constructors (return type equals method name)
+      if (match[1] === match[2]) continue;
+      functions.push({
+        name: match[2],
+        params: match[3].trim(),
+        returnType: match[1],
+        isAsync: false,
+        isExported: match[0].includes('public'),
+        line: lineNumber,
+      });
+    }
+  } else if (language === 'cpp') {
+    let match;
+    while ((match = CPP_FUNCTION_REGEX.exec(content)) !== null) {
+      const lineNumber = content.substring(0, match.index).split('\n').length;
+      // Skip common false positives
+      if (['if', 'while', 'for', 'switch', 'catch', 'return'].includes(match[2])) continue;
+      functions.push({
+        name: match[2],
+        params: match[3].trim(),
+        returnType: match[1].trim(),
+        isAsync: false,
+        isExported: true, // C++ doesn't have export concept like JS
+        line: lineNumber,
+      });
+    }
   }
 
   return functions;
@@ -357,6 +457,98 @@ function extractClasses(content: string, language: string): ClassSignature[] {
         extends: match[2],
         methods: [],
         isExported: !match[1].startsWith('_'),
+        line: lineNumber,
+      });
+    }
+  } else if (language === 'go') {
+    // Extract structs
+    let match;
+    while ((match = GO_STRUCT_REGEX.exec(content)) !== null) {
+      const lineNumber = content.substring(0, match.index).split('\n').length;
+      classes.push({
+        name: match[1],
+        methods: [],
+        isExported: /^[A-Z]/.test(match[1]),
+        line: lineNumber,
+      });
+    }
+    // Extract interfaces
+    while ((match = GO_INTERFACE_REGEX.exec(content)) !== null) {
+      const lineNumber = content.substring(0, match.index).split('\n').length;
+      classes.push({
+        name: match[1] + ' (interface)',
+        methods: [],
+        isExported: /^[A-Z]/.test(match[1]),
+        line: lineNumber,
+      });
+    }
+  } else if (language === 'rust') {
+    // Extract structs
+    let match;
+    while ((match = RUST_STRUCT_REGEX.exec(content)) !== null) {
+      const lineNumber = content.substring(0, match.index).split('\n').length;
+      classes.push({
+        name: match[1],
+        methods: [],
+        isExported: match[0].includes('pub'),
+        line: lineNumber,
+      });
+    }
+    // Extract traits
+    while ((match = RUST_TRAIT_REGEX.exec(content)) !== null) {
+      const lineNumber = content.substring(0, match.index).split('\n').length;
+      classes.push({
+        name: match[1] + ' (trait)',
+        methods: [],
+        isExported: match[0].includes('pub'),
+        line: lineNumber,
+      });
+    }
+  } else if (language === 'java') {
+    // Extract classes
+    let match;
+    while ((match = JAVA_CLASS_REGEX.exec(content)) !== null) {
+      const lineNumber = content.substring(0, match.index).split('\n').length;
+      classes.push({
+        name: match[1],
+        extends: match[2],
+        methods: [],
+        isExported: match[0].includes('public'),
+        line: lineNumber,
+      });
+    }
+    // Extract interfaces
+    while ((match = JAVA_INTERFACE_REGEX.exec(content)) !== null) {
+      const lineNumber = content.substring(0, match.index).split('\n').length;
+      classes.push({
+        name: match[1] + ' (interface)',
+        extends: match[2],
+        methods: [],
+        isExported: match[0].includes('public'),
+        line: lineNumber,
+      });
+    }
+  } else if (language === 'cpp') {
+    // Extract classes
+    let match;
+    while ((match = CPP_CLASS_REGEX.exec(content)) !== null) {
+      const lineNumber = content.substring(0, match.index).split('\n').length;
+      classes.push({
+        name: match[1],
+        extends: match[2],
+        methods: [],
+        isExported: true,
+        line: lineNumber,
+      });
+    }
+    // Extract structs
+    while ((match = CPP_STRUCT_REGEX.exec(content)) !== null) {
+      const lineNumber = content.substring(0, match.index).split('\n').length;
+      classes.push({
+        name: match[1] + ' (struct)',
+        extends: match[2],
+        methods: [],
+        isExported: true,
         line: lineNumber,
       });
     }
@@ -390,6 +582,38 @@ function extractExports(content: string, language: string): string[] {
       if (names) {
         exports.push(...names.map(n => n.replace(/['"]/g, '')));
       }
+    }
+  } else if (language === 'go') {
+    // Go exports are capitalized identifiers - already handled in function/class extraction
+    // Just note the package name
+    const pkgMatch = /package\s+(\w+)/.exec(content);
+    if (pkgMatch) {
+      exports.push(`package: ${pkgMatch[1]}`);
+    }
+  } else if (language === 'rust') {
+    // pub use statements
+    const pubUseRegex = /pub\s+use\s+([^;]+);/g;
+    let match;
+    while ((match = pubUseRegex.exec(content)) !== null) {
+      exports.push(match[1].trim());
+    }
+    // mod declarations
+    const modRegex = /pub\s+mod\s+(\w+)/g;
+    while ((match = modRegex.exec(content)) !== null) {
+      exports.push(`mod ${match[1]}`);
+    }
+  } else if (language === 'java') {
+    // Package declaration
+    const pkgMatch = /package\s+([^;]+);/.exec(content);
+    if (pkgMatch) {
+      exports.push(`package: ${pkgMatch[1].trim()}`);
+    }
+  } else if (language === 'cpp') {
+    // Namespace declarations
+    const nsRegex = /namespace\s+(\w+)/g;
+    let match;
+    while ((match = nsRegex.exec(content)) !== null) {
+      exports.push(`namespace: ${match[1]}`);
     }
   }
 

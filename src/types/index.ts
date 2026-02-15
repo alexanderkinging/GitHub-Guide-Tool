@@ -61,7 +61,7 @@ export interface ClassSignature {
 
 export interface ModuleSkeleton {
   path: string;
-  language: 'typescript' | 'javascript' | 'python' | 'unknown';
+  language: 'typescript' | 'javascript' | 'python' | 'go' | 'rust' | 'java' | 'cpp' | 'unknown';
   functions: FunctionSignature[];
   classes: ClassSignature[];
   exports: string[];
