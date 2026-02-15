@@ -19,6 +19,8 @@ export interface RepoInfo {
   fileTree: FileNode[];
   readme: string;
   fileCount: number;
+  isPrivate: boolean;
+  visibility: 'public' | 'private' | 'internal';
 }
 
 // Code Skeleton Types

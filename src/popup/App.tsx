@@ -124,6 +124,7 @@ export default function App() {
               owner={currentRepo.owner}
               repo={currentRepo.repo}
               settings={settings!}
+              onOpenSettings={() => setView('settings')}
             />
           )}
         </div>

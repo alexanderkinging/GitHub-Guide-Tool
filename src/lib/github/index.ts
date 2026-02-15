@@ -32,6 +32,19 @@ const IGNORED_EXTENSIONS = new Set([
   '.min.css',
 ]);
 
+export interface TokenPermissions {
+  isValid: boolean;
+  hasPrivateAccess: boolean | 'unknown';
+  scopes: string[];
+  rateLimit: {
+    remaining: number;
+    limit: number;
+    reset: number;
+  };
+  user?: string;
+  error?: string;
+}
+
 export class GitHubAPI {
   private token: string | null = null;
   private maxRetries = 3;
@@ -41,8 +54,77 @@ export class GitHubAPI {
     this.token = token;
   }
 
+  getToken(): string | null {
+    return this.token;
+  }
+
   private async sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  async checkTokenPermissions(): Promise<TokenPermissions> {
+    if (!this.token) {
+      return {
+        isValid: false,
+        hasPrivateAccess: false,
+        scopes: [],
+        rateLimit: { remaining: 0, limit: 0, reset: 0 },
+        error: 'No token configured',
+      };
+    }
+
+    try {
+      const response = await fetch(`${GITHUB_API_BASE}/user`, {
+        headers: {
+          Accept: 'application/vnd.github.v3+json',
+          Authorization: `Bearer ${this.token}`,
+        },
+      });
+
+      const rateLimit = {
+        remaining: parseInt(response.headers.get('X-RateLimit-Remaining') || '0', 10),
+        limit: parseInt(response.headers.get('X-RateLimit-Limit') || '0', 10),
+        reset: parseInt(response.headers.get('X-RateLimit-Reset') || '0', 10),
+      };
+
+      if (!response.ok) {
+        return {
+          isValid: false,
+          hasPrivateAccess: false,
+          scopes: [],
+          rateLimit,
+          error: response.status === 401 ? 'Invalid token' : `HTTP ${response.status}`,
+        };
+      }
+
+      const scopesHeader = response.headers.get('X-OAuth-Scopes') || '';
+      const scopes = scopesHeader.split(',').map(s => s.trim()).filter(Boolean);
+
+      const userData = await response.json();
+
+      // Check if token has private repo access
+      // Classic token: check 'repo' scope in X-OAuth-Scopes header
+      // Fine-grained token: no scopes header, cannot determine access level
+      const hasPrivateAccess: boolean | 'unknown' = scopes.length === 0
+        ? 'unknown'  // Fine-grained token - cannot determine
+        : scopes.includes('repo') || scopes.some(s => s.startsWith('repo'));
+
+      return {
+        isValid: true,
+        hasPrivateAccess,
+        scopes,
+        rateLimit,
+        user: userData.login,
+      };
+    } catch (error) {
+      return {
+        isValid: false,
+        hasPrivateAccess: false,
+        scopes: [],
+        rateLimit: { remaining: 0, limit: 0, reset: 0 },
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
   }
 
   private async fetchWithRetry<T>(endpoint: string, retries = this.maxRetries): Promise<T> {
@@ -71,6 +153,19 @@ export class GitHubAPI {
           return this.fetchWithRetry<T>(endpoint, retries - 1);
         }
 
+        // Handle private repo access errors
+        if (endpoint.startsWith('/repos/')) {
+          if (response.status === 404) {
+            throw new Error('PRIVATE_REPO_ACCESS_DENIED: 仓库不存在或无访问权限。如果是私有仓库，请在设置中配置有 repo 权限的 Token。');
+          }
+          if (response.status === 403) {
+            throw new Error('PRIVATE_REPO_ACCESS_DENIED: 无权访问此仓库。请检查 Token 是否有 repo 权限。');
+          }
+          if (response.status === 401) {
+            throw new Error('PRIVATE_REPO_ACCESS_DENIED: Token 无效或已过期。请在设置中重新配置 Token。');
+          }
+        }
+
         throw new Error(`GitHub API error: ${response.status} ${response.statusText}`);
       }
 
@@ -97,6 +192,8 @@ export class GitHubAPI {
       language: string;
       stargazers_count: number;
       forks_count: number;
+      private: boolean;
+      visibility: 'public' | 'private' | 'internal';
     }>(`/repos/${owner}/${repo}`);
 
     // Fetch file tree
@@ -133,6 +230,8 @@ export class GitHubAPI {
       fileTree,
       readme,
       fileCount,
+      isPrivate: repoData.private,
+      visibility: repoData.visibility || (repoData.private ? 'private' : 'public'),
     };
   }
 

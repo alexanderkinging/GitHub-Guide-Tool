@@ -29,6 +29,7 @@ interface AnalysisProps {
   owner: string;
   repo: string;
   settings: StorageSettings;
+  onOpenSettings?: () => void;
 }
 
 type Stage = 'idle' | 'fetching' | 'extracting' | 'analyzing' | 'complete' | 'error';
@@ -42,7 +43,23 @@ const STAGE_LABELS: Record<Stage, string> = {
   error: 'Error occurred',
 };
 
-export default function Analysis({ owner, repo, settings }: AnalysisProps) {
+// GitHub Token 创建 URL
+const GITHUB_TOKEN_URL = 'https://github.com/settings/tokens/new?scopes=repo&description=GitHub%20Guide%20Tool';
+
+// 检测是否为私有仓库权限错误
+function isPrivateRepoError(errorMessage: string): boolean {
+  return errorMessage.startsWith('PRIVATE_REPO_ACCESS_DENIED:');
+}
+
+// 获取用户友好的错误信息
+function getDisplayError(errorMessage: string): string {
+  if (errorMessage.startsWith('PRIVATE_REPO_ACCESS_DENIED:')) {
+    return errorMessage.replace('PRIVATE_REPO_ACCESS_DENIED: ', '');
+  }
+  return errorMessage;
+}
+
+export default function Analysis({ owner, repo, settings, onOpenSettings }: AnalysisProps) {
   const [stage, setStage] = useState<Stage>('idle');
   const [progress, setProgress] = useState(0);
   const [repoInfo, setRepoInfo] = useState<RepoInfo | null>(null);
@@ -90,10 +107,8 @@ export default function Analysis({ owner, repo, settings }: AnalysisProps) {
     setCached(false);
 
     try {
-      // Set GitHub token if available
-      if (settings.githubToken) {
-        githubAPI.setToken(settings.githubToken);
-      }
+      // Set GitHub token (explicitly clear if not configured)
+      githubAPI.setToken(settings.githubToken || null);
 
       // Fetch repo info
       setProgress(10);
@@ -254,7 +269,18 @@ export default function Analysis({ owner, repo, settings }: AnalysisProps) {
       {/* Repo Info Header */}
       <div className="flex items-center gap-3 p-3 bg-gray-50 rounded-lg">
         <div className="flex-1">
-          <h2 className="font-semibold text-gray-800">{owner}/{repo}</h2>
+          <div className="flex items-center gap-2">
+            <h2 className="font-semibold text-gray-800">{owner}/{repo}</h2>
+            {repoInfo && (
+              <span className={`px-1.5 py-0.5 rounded text-xs ${
+                repoInfo.isPrivate
+                  ? 'bg-yellow-100 text-yellow-700'
+                  : 'bg-green-100 text-green-700'
+              }`}>
+                {repoInfo.isPrivate ? '🔒 私有' : '🌐 公开'}
+              </span>
+            )}
+          </div>
           {repoInfo && (
             <div className="flex items-center gap-3 mt-1 text-sm text-gray-500">
               <span>⭐ {repoInfo.stars.toLocaleString()}</span>
@@ -292,8 +318,26 @@ export default function Analysis({ owner, repo, settings }: AnalysisProps) {
 
       {/* Error Display */}
       {error && (
-        <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
-          {error}
+        <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-sm">
+          <p className="text-red-700">{getDisplayError(error)}</p>
+          {isPrivateRepoError(error) && (
+            <div className="mt-2 flex gap-2">
+              {onOpenSettings && (
+                <button
+                  onClick={onOpenSettings}
+                  className="text-blue-600 hover:underline text-xs"
+                >
+                  → 打开设置
+                </button>
+              )}
+              <button
+                onClick={() => window.open(GITHUB_TOKEN_URL, '_blank')}
+                className="text-blue-600 hover:underline text-xs"
+              >
+                → 创建 Token
+              </button>
+            </div>
+          )}
         </div>
       )}
 

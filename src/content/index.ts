@@ -8,7 +8,7 @@ interface RepoInfo {
 
 function parseGitHubUrl(): RepoInfo | null {
   const url = window.location.href;
-  const match = url.match(/github\.com\/([^\/]+)\/([^\/\?#]+)/);
+  const match = url.match(/github\.com\/([^/]+)\/([^/?#]+)/);
 
   if (!match) {
     return null;

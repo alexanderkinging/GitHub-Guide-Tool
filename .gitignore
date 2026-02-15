@@ -35,3 +35,6 @@ npm-debug.log*
 .prompt.md
 assignment-github-guide-tool.md
 NEXT_STEPS.md
+
+# 本地开发文档
+docs/

@@ -43,7 +43,7 @@ async function streamClaude(
   let fullText = '';
 
   try {
-    while (true) {
+    for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
 
@@ -114,7 +114,7 @@ async function streamOpenAI(
   let fullText = '';
 
   try {
-    while (true) {
+    for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
 
@@ -185,7 +185,7 @@ async function streamSiliconFlow(
   let fullText = '';
 
   try {
-    while (true) {
+    for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
 
@@ -257,7 +257,7 @@ async function streamBigModel(
   let fullText = '';
 
   try {
-    while (true) {
+    for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
 
