@@ -45,39 +45,74 @@ function generateRequestId(): string {
 
 // Convert Markdown to HTML
 function markdownToHtml(markdown: string): string {
-  let html = markdown
-    // Headers
-    .replace(/^###### (.+)$/gm, '<h6>$1</h6>')
-    .replace(/^##### (.+)$/gm, '<h5>$1</h5>')
-    .replace(/^#### (.+)$/gm, '<h4>$1</h4>')
-    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
-    // Bold and italic
-    .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    // Code blocks
-    .replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="language-$1">$2</code></pre>')
-    // Inline code
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    // Links
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>')
-    // Unordered lists
-    .replace(/^- (.+)$/gm, '<li>$1</li>')
-    .replace(/(<li>.*<\/li>\n?)+/g, '<ul>$&</ul>')
-    // Ordered lists
-    .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
-    // Blockquotes
-    .replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>')
-    // Horizontal rules
-    .replace(/^---$/gm, '<hr>')
-    // Paragraphs
-    .replace(/\n\n/g, '</p><p>')
-    // Line breaks
-    .replace(/\n/g, '<br>');
+  // Normalize line endings and trim
+  let html = markdown.replace(/\r\n/g, '\n').trim();
 
-  return `<p>${html}</p>`.replace(/<p><\/p>/g, '').replace(/<p>(<h[1-6]>)/g, '$1').replace(/(<\/h[1-6]>)<\/p>/g, '$1');
+  // Code blocks (preserve content, process first)
+  html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="language-$1">$2</code></pre>');
+
+  // Headers
+  html = html.replace(/^###### (.+)$/gm, '<h6>$1</h6>');
+  html = html.replace(/^##### (.+)$/gm, '<h5>$1</h5>');
+  html = html.replace(/^#### (.+)$/gm, '<h4>$1</h4>');
+  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+  html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+
+  // Bold and italic
+  html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+
+  // Inline code
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+  // Links
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+
+  // Unordered lists - collect consecutive items
+  html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
+  html = html.replace(/(<li>.*<\/li>\n?)+/g, (match) => `<ul>${match.replace(/\n/g, '')}</ul>`);
+
+  // Ordered lists
+  html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
+
+  // Blockquotes
+  html = html.replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>');
+
+  // Horizontal rules
+  html = html.replace(/^---$/gm, '<hr>');
+
+  // Clean up multiple newlines (3+ becomes 2)
+  html = html.replace(/\n{3,}/g, '\n\n');
+
+  // Paragraphs - split by double newlines
+  html = html.replace(/\n\n+/g, '</p><p>');
+
+  // Single line breaks within paragraphs
+  html = html.replace(/\n/g, '<br>');
+
+  // Wrap in paragraph
+  html = `<p>${html}</p>`;
+
+  // Clean up empty paragraphs and fix block elements
+  html = html
+    .replace(/<p>\s*<\/p>/g, '')
+    .replace(/<p>(<h[1-6]>)/g, '$1')
+    .replace(/(<\/h[1-6]>)<\/p>/g, '$1')
+    .replace(/<p>(<ul>)/g, '$1')
+    .replace(/(<\/ul>)<\/p>/g, '$1')
+    .replace(/<p>(<pre>)/g, '$1')
+    .replace(/(<\/pre>)<\/p>/g, '$1')
+    .replace(/<p>(<blockquote>)/g, '$1')
+    .replace(/(<\/blockquote>)<\/p>/g, '$1')
+    .replace(/<p>(<hr>)/g, '$1')
+    .replace(/(<hr>)<\/p>/g, '$1')
+    .replace(/<br>\s*<br>/g, '<br>')
+    .replace(/<p><br>/g, '<p>')
+    .replace(/<br><\/p>/g, '</p>');
+
+  return html;
 }
 
 // Save to Feishu document
