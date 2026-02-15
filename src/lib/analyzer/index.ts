@@ -92,7 +92,7 @@ export function determineProjectSize(fileCount: number): ProjectSize {
   return 'large';
 }
 
-export function getAnalysisConfig(size: ProjectSize, mode: AnalysisMode = 'default'): AnalysisConfig {
+export function getAnalysisConfig(size: ProjectSize, mode: AnalysisMode = 'full'): AnalysisConfig {
   if (mode === 'full') {
     // Full analysis: no limits
     return {
