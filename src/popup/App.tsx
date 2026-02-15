@@ -2,9 +2,10 @@ import { useState, useEffect } from 'react';
 import type { StorageSettings } from '@/types';
 import Settings from './components/Settings';
 import Analysis from './components/Analysis';
+import PromptEditor from './components/PromptEditor';
 import Header from './components/Header';
 
-type View = 'main' | 'settings';
+type View = 'main' | 'settings' | 'prompts';
 
 interface CurrentRepo {
   owner: string;
@@ -50,7 +51,9 @@ export default function App() {
     try {
       await chrome.runtime.sendMessage({ type: 'SAVE_SETTINGS', payload: newSettings });
       setSettings(newSettings);
-      setView('main');
+      if (view === 'settings') {
+        setView('main');
+      }
     } catch (err) {
       setError('Failed to save settings');
     }
@@ -75,7 +78,9 @@ export default function App() {
     <div className="bg-white">
       <Header
         onSettingsClick={() => setView(view === 'settings' ? 'main' : 'settings')}
+        onPromptsClick={() => setView(view === 'prompts' ? 'main' : 'prompts')}
         isSettingsView={view === 'settings'}
+        isPromptsView={view === 'prompts'}
       />
 
       {error && (
@@ -95,6 +100,11 @@ export default function App() {
           settings={settings}
           onSave={handleSaveSettings}
           onCancel={() => setView('main')}
+        />
+      ) : view === 'prompts' ? (
+        <PromptEditor
+          settings={settings!}
+          onSave={handleSaveSettings}
         />
       ) : (
         <div className="p-4">

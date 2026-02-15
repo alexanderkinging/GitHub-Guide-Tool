@@ -163,13 +163,33 @@ export interface CachedAnalysis {
   timestamp: number;
 }
 
+// Analysis Task Types (for background persistence)
+export type AnalysisStage = 'idle' | 'fetching' | 'extracting' | 'analyzing' | 'complete' | 'error';
+
+export interface AnalysisTask {
+  id: string;                    // Task ID: `${owner}/${repo}`
+  owner: string;
+  repo: string;
+  stage: AnalysisStage;
+  progress: number;
+  analysis: string;
+  repoInfo: RepoInfo | null;
+  chunkProgress: ChunkedAnalysisProgress | null;
+  error: string | null;
+  startedAt: number;
+  lastUpdatedAt: number;
+}
+
 // Message Types for Chrome Extension
 export type MessageType =
   | 'GET_REPO_INFO'
   | 'ANALYZE_REPO'
   | 'GET_SETTINGS'
   | 'SAVE_SETTINGS'
-  | 'CLEAR_CACHE';
+  | 'CLEAR_CACHE'
+  | 'START_ANALYSIS'
+  | 'GET_ANALYSIS_STATE'
+  | 'CANCEL_ANALYSIS';
 
 export interface ExtensionMessage {
   type: MessageType;
