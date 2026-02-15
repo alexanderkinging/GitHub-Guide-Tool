@@ -19,6 +19,13 @@ export default defineConfig({
       input: {
         popup: resolve(__dirname, 'src/popup/index.html'),
       },
+      output: {
+        manualChunks: {
+          'vendor-react': ['react', 'react-dom'],
+          'vendor-markdown': ['react-markdown', 'remark-gfm'],
+          'vendor-highlight': ['react-syntax-highlighter'],
+        },
+      },
     },
   },
 });

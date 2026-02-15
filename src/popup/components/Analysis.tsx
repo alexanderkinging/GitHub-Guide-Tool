@@ -1,12 +1,29 @@
 import { useState, useEffect, useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { Light as SyntaxHighlighter } from 'react-syntax-highlighter';
+import js from 'react-syntax-highlighter/dist/esm/languages/hljs/javascript';
+import ts from 'react-syntax-highlighter/dist/esm/languages/hljs/typescript';
+import python from 'react-syntax-highlighter/dist/esm/languages/hljs/python';
+import bash from 'react-syntax-highlighter/dist/esm/languages/hljs/bash';
+import json from 'react-syntax-highlighter/dist/esm/languages/hljs/json';
+import { githubGist } from 'react-syntax-highlighter/dist/esm/styles/hljs';
 import type { StorageSettings, RepoInfo, AnalysisResult } from '@/types';
 import { githubAPI } from '@/lib/github';
 import { extractCodeSkeleton, determineProjectSize } from '@/lib/analyzer';
 import { analyzeWithAI } from '@/lib/ai';
+
+// Register only needed languages
+SyntaxHighlighter.registerLanguage('javascript', js);
+SyntaxHighlighter.registerLanguage('js', js);
+SyntaxHighlighter.registerLanguage('typescript', ts);
+SyntaxHighlighter.registerLanguage('ts', ts);
+SyntaxHighlighter.registerLanguage('python', python);
+SyntaxHighlighter.registerLanguage('py', python);
+SyntaxHighlighter.registerLanguage('bash', bash);
+SyntaxHighlighter.registerLanguage('sh', bash);
+SyntaxHighlighter.registerLanguage('shell', bash);
+SyntaxHighlighter.registerLanguage('json', json);
 
 interface AnalysisProps {
   owner: string;
@@ -265,7 +282,7 @@ export default function Analysis({ owner, repo, settings }: AnalysisProps) {
                   const isInline = !match;
                   return !isInline ? (
                     <SyntaxHighlighter
-                      style={oneLight}
+                      style={githubGist}
                       language={match[1]}
                       PreTag="div"
                     >
