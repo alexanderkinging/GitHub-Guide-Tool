@@ -1,6 +1,6 @@
 {
   "name": "github-guide-tool",
-  "version": "1.6.0",
+  "version": "1.8.0",
   "description": "A Chrome extension that analyzes GitHub repositories and generates AI-powered project documentation",
   "author": "Alexander King",
   "license": "MIT",
@@ -51,6 +51,7 @@
     "vite": "^5.0.12"
   },
   "optionalDependencies": {
-    "@rollup/rollup-darwin-arm64": "^4.57.1"
+    "@rollup/rollup-darwin-arm64": "^4.57.1",
+    "@rollup/rollup-darwin-x64": "^4.57.1"
   }
 }

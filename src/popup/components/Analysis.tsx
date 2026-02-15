@@ -7,11 +7,16 @@ import ts from 'react-syntax-highlighter/dist/esm/languages/hljs/typescript';
 import python from 'react-syntax-highlighter/dist/esm/languages/hljs/python';
 import bash from 'react-syntax-highlighter/dist/esm/languages/hljs/bash';
 import json from 'react-syntax-highlighter/dist/esm/languages/hljs/json';
+import go from 'react-syntax-highlighter/dist/esm/languages/hljs/go';
+import rust from 'react-syntax-highlighter/dist/esm/languages/hljs/rust';
+import java from 'react-syntax-highlighter/dist/esm/languages/hljs/java';
+import cpp from 'react-syntax-highlighter/dist/esm/languages/hljs/cpp';
 import { githubGist } from 'react-syntax-highlighter/dist/esm/styles/hljs';
-import type { StorageSettings, RepoInfo, AnalysisResult } from '@/types';
+import type { StorageSettings, RepoInfo, AnalysisResult, ChunkedAnalysisProgress } from '@/types';
 import { githubAPI } from '@/lib/github';
 import { extractCodeSkeleton, determineProjectSize } from '@/lib/analyzer';
-import { analyzeWithAI } from '@/lib/ai';
+import { analyzeWithAI, checkNeedsChunking, analyzeWithChunking } from '@/lib/ai';
+import { getTemplateById } from '@/lib/prompts/presets';
 
 // Register only needed languages
 SyntaxHighlighter.registerLanguage('javascript', js);
@@ -24,6 +29,25 @@ SyntaxHighlighter.registerLanguage('bash', bash);
 SyntaxHighlighter.registerLanguage('sh', bash);
 SyntaxHighlighter.registerLanguage('shell', bash);
 SyntaxHighlighter.registerLanguage('json', json);
+SyntaxHighlighter.registerLanguage('go', go);
+SyntaxHighlighter.registerLanguage('golang', go);
+SyntaxHighlighter.registerLanguage('rust', rust);
+SyntaxHighlighter.registerLanguage('rs', rust);
+SyntaxHighlighter.registerLanguage('java', java);
+SyntaxHighlighter.registerLanguage('cpp', cpp);
+SyntaxHighlighter.registerLanguage('c++', cpp);
+SyntaxHighlighter.registerLanguage('c', cpp);
+SyntaxHighlighter.registerLanguage('cc', cpp);
+SyntaxHighlighter.registerLanguage('cxx', cpp);
+SyntaxHighlighter.registerLanguage('h', cpp);
+SyntaxHighlighter.registerLanguage('hpp', cpp);
+
+// Normalize language name (e.g., c++ -> cpp)
+function normalizeLanguage(lang: string): string {
+  const normalized = lang.toLowerCase();
+  if (normalized === 'c++') return 'cpp';
+  return normalized;
+}
 
 interface AnalysisProps {
   owner: string;
@@ -67,6 +91,7 @@ export default function Analysis({ owner, repo, settings, onOpenSettings }: Anal
   const [error, setError] = useState<string | null>(null);
   const [cached, setCached] = useState(false);
   const [feishuSaving, setFeishuSaving] = useState(false);
+  const [chunkProgress, setChunkProgress] = useState<ChunkedAnalysisProgress | null>(null);
   const analysisRef = useRef<HTMLDivElement>(null);
 
   // Check for cached analysis on mount
@@ -105,6 +130,7 @@ export default function Analysis({ owner, repo, settings, onOpenSettings }: Anal
     setError(null);
     setAnalysis('');
     setCached(false);
+    setChunkProgress(null);
 
     try {
       // Set GitHub token (explicitly clear if not configured)
@@ -143,55 +169,127 @@ export default function Analysis({ owner, repo, settings, onOpenSettings }: Anal
         throw new Error('API key not configured');
       }
 
+      // Get active prompt template
+      const activeTemplate = getTemplateById(
+        settings.activeTemplateId || 'preset-default',
+        settings.customTemplates
+      );
+
+      // Check if chunking is needed
+      const readmeLength = fetchedRepoInfo.readme?.length || 0;
+      const modelToUse = model || 'claude-sonnet-4-20250514';
+      const { needsChunking: useChunking, estimatedChunks } = checkNeedsChunking(
+        extractedSkeleton,
+        modelToUse,
+        readmeLength
+      );
+
       // Start AI analysis with streaming
       setStage('analyzing');
       setProgress(60);
 
       let fullAnalysis = '';
-      await analyzeWithAI(
-        settings.aiProvider,
-        apiKey,
-        model,
-        extractedSkeleton,
-        fetchedRepoInfo,
-        {
-          onToken: (token) => {
-            fullAnalysis += token;
-            setAnalysis(fullAnalysis);
-            // Auto-scroll to bottom during streaming
-            if (analysisRef.current) {
-              analysisRef.current.scrollTop = analysisRef.current.scrollHeight;
-            }
-          },
-          onComplete: async (text) => {
-            setAnalysis(text);
-            setStage('complete');
-            setProgress(100);
 
-            // Cache the result
-            try {
-              await chrome.runtime.sendMessage({
-                type: 'SAVE_CACHE',
-                payload: {
-                  owner,
-                  repo,
-                  result: {
-                    repoInfo: fetchedRepoInfo,
-                    skeleton: extractedSkeleton,
-                    aiAnalysis: text,
-                    generatedAt: Date.now(),
+      if (useChunking && estimatedChunks > 1) {
+        // Use chunked analysis for large codebases
+        await analyzeWithChunking(
+          settings.aiProvider,
+          apiKey,
+          modelToUse,
+          extractedSkeleton,
+          fetchedRepoInfo,
+          {
+            onToken: (token) => {
+              fullAnalysis += token;
+              setAnalysis(fullAnalysis);
+              if (analysisRef.current) {
+                analysisRef.current.scrollTop = analysisRef.current.scrollHeight;
+              }
+            },
+            onComplete: async (text) => {
+              setAnalysis(text);
+              setStage('complete');
+              setProgress(100);
+              setChunkProgress(null);
+
+              // Cache the result
+              try {
+                await chrome.runtime.sendMessage({
+                  type: 'SAVE_CACHE',
+                  payload: {
+                    owner,
+                    repo,
+                    result: {
+                      repoInfo: fetchedRepoInfo,
+                      skeleton: extractedSkeleton,
+                      aiAnalysis: text,
+                      generatedAt: Date.now(),
+                    },
                   },
-                },
-              });
-            } catch (err) {
-              console.error('Cache save error:', err);
-            }
+                });
+              } catch (err) {
+                console.error('Cache save error:', err);
+              }
+            },
+            onError: (err) => {
+              throw err;
+            },
           },
-          onError: (err) => {
-            throw err;
+          (progress) => {
+            setChunkProgress(progress);
+            // Update progress based on chunk progress
+            const chunkPercent = (progress.currentChunk / progress.totalChunks) * 100;
+            setProgress(60 + (chunkPercent * 0.35));
+          }
+        );
+      } else {
+        // Use standard analysis
+        await analyzeWithAI(
+          settings.aiProvider,
+          apiKey,
+          model,
+          extractedSkeleton,
+          fetchedRepoInfo,
+          {
+            onToken: (token) => {
+              fullAnalysis += token;
+              setAnalysis(fullAnalysis);
+              // Auto-scroll to bottom during streaming
+              if (analysisRef.current) {
+                analysisRef.current.scrollTop = analysisRef.current.scrollHeight;
+              }
+            },
+            onComplete: async (text) => {
+              setAnalysis(text);
+              setStage('complete');
+              setProgress(100);
+
+              // Cache the result
+              try {
+                await chrome.runtime.sendMessage({
+                  type: 'SAVE_CACHE',
+                  payload: {
+                    owner,
+                    repo,
+                    result: {
+                      repoInfo: fetchedRepoInfo,
+                      skeleton: extractedSkeleton,
+                      aiAnalysis: text,
+                      generatedAt: Date.now(),
+                    },
+                  },
+                });
+              } catch (err) {
+                console.error('Cache save error:', err);
+              }
+            },
+            onError: (err) => {
+              throw err;
+            },
           },
-        }
-      );
+          activeTemplate
+        );
+      }
     } catch (err) {
       setStage('error');
       setError(err instanceof Error ? err.message : 'Unknown error occurred');
@@ -304,7 +402,13 @@ export default function Analysis({ owner, repo, settings, onOpenSettings }: Anal
       {stage !== 'idle' && stage !== 'complete' && stage !== 'error' && (
         <div className="space-y-2">
           <div className="flex justify-between text-sm">
-            <span className="text-gray-600">{STAGE_LABELS[stage]}</span>
+            <span className="text-gray-600">
+              {chunkProgress
+                ? chunkProgress.stage === 'generating'
+                  ? 'Generating final report...'
+                  : `Analyzing chunk ${chunkProgress.currentChunk}/${chunkProgress.totalChunks}...`
+                : STAGE_LABELS[stage]}
+            </span>
             <span className="text-gray-400">{Math.round(progress)}%</span>
           </div>
           <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
@@ -313,6 +417,11 @@ export default function Analysis({ owner, repo, settings, onOpenSettings }: Anal
               style={{ width: `${progress}%` }}
             />
           </div>
+          {chunkProgress && chunkProgress.totalChunks > 1 && (
+            <div className="text-xs text-gray-500">
+              Multi-round analysis: {chunkProgress.totalChunks} chunks detected
+            </div>
+          )}
         </div>
       )}
 
@@ -363,12 +472,12 @@ export default function Analysis({ owner, repo, settings, onOpenSettings }: Anal
               remarkPlugins={[remarkGfm]}
               components={{
                 code({ className, children, ...props }) {
-                  const match = /language-(\w+)/.exec(className || '');
+                  const match = /language-([A-Za-z0-9#+-]+)/.exec(className || '');
                   const isInline = !match;
                   return !isInline ? (
                     <SyntaxHighlighter
                       style={githubGist}
-                      language={match[1]}
+                      language={normalizeLanguage(match[1])}
                       PreTag="div"
                     >
                       {String(children).replace(/\n$/, '')}

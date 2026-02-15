@@ -2,7 +2,7 @@
 
 > A Chrome extension that helps you quickly understand GitHub open-source projects by generating AI-powered project documentation.
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/alexanderkinging/github-guide-tool)
+[![Version](https://img.shields.io/badge/version-1.8.0-blue.svg)](https://github.com/alexanderkinging/github-guide-tool)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 [English](README.md) | [中文](README.zh-CN.md)
@@ -14,11 +14,13 @@ GitHub Guide Tool is a Chrome browser extension that analyzes GitHub repositorie
 ### Key Features
 
 - 🚀 **Instant Analysis** - Analyze any public GitHub repository with one click
-- 🤖 **Multiple AI Providers** - Support for Claude, OpenAI, and SiliconFlow
+- 🤖 **Multiple AI Providers** - Support for Claude, OpenAI, SiliconFlow, and BigModel
+- 🧠 **Intelligent Chunking** - Automatically split large codebases for models with smaller context limits
 - 📊 **Smart Strategy** - Adaptive analysis depth based on project size
 - ⚡ **Streaming Output** - Real-time AI response display
 - 💾 **Cache System** - 24-hour result caching to avoid repeated API calls
 - 📄 **Markdown Export** - Export analysis results as Markdown files
+- 🔒 **Private Repos** - Support for private repositories with GitHub token
 
 ## 🎯 How It Works
 
@@ -157,7 +159,19 @@ npm run lint
 
 ## 📋 Roadmap
 
-### v1.0.0 (Current) ✅
+### v1.8.0 (Current) ✅
+- [x] Intelligent chunked analysis for large codebases
+- [x] Token estimation and model context limits
+- [x] Multi-round analysis with structured summaries
+- [x] Progress display for chunked analysis
+
+### v1.5.0 - v1.7.0 ✅
+- [x] Private repository support
+- [x] Multi-language code skeleton extraction (Go, Rust, Java, C++)
+- [x] Custom prompt templates
+- [x] BigModel (智谱) AI provider support
+
+### v1.0.0 ✅
 - [x] Basic Chrome extension framework
 - [x] GitHub API integration
 - [x] Code skeleton extraction (JS/TS/Python)
@@ -166,12 +180,6 @@ npm run lint
 - [x] Markdown export
 - [x] Cache system
 - [x] Memory optimization
-
-### v1.1.0 (Planned)
-- [ ] Private repository support
-- [ ] More language support (Go, Rust, Java, C++)
-- [ ] Analysis history
-- [ ] Custom prompt templates
 
 ### v2.0.0 (Future)
 - [ ] Interactive Q&A mode

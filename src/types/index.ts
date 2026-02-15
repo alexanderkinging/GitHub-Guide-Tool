@@ -106,11 +106,21 @@ export interface AIService {
 
 // Analysis Types
 export type ProjectSize = 'small' | 'medium' | 'large';
+export type AnalysisMode = 'default' | 'full';
 
 export interface AnalysisConfig {
   projectSize: ProjectSize;
   maxFilesToAnalyze: number;
   includeFullContent: boolean;
+  maxReadmeLength: number;
+  analysisMode: AnalysisMode;
+}
+
+// Chunked Analysis Types
+export interface ChunkedAnalysisProgress {
+  currentChunk: number;
+  totalChunks: number;
+  stage: 'analyzing' | 'summarizing' | 'generating';
 }
 
 export interface AnalysisResult {
@@ -118,6 +128,17 @@ export interface AnalysisResult {
   skeleton: CodeSkeleton;
   aiAnalysis: string;
   generatedAt: number;
+}
+
+// Prompt Template Types
+export interface PromptTemplate {
+  id: string;
+  name: string;
+  description?: string;
+  systemPrompt: string;
+  userPrompt: string;
+  isPreset: boolean;
+  createdAt?: number;
 }
 
 // Storage Types
@@ -132,6 +153,8 @@ export interface StorageSettings {
   openaiModel?: string;
   siliconflowModel?: string;
   bigmodelModel?: string;
+  activeTemplateId?: string;
+  customTemplates?: PromptTemplate[];
 }
 
 export interface CachedAnalysis {

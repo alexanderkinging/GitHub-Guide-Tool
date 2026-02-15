@@ -2,7 +2,7 @@
 
 > 一个 Chrome 浏览器插件，通过 AI 自动生成项目文档，帮助你快速理解 GitHub 开源项目。
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/alexanderkinging/github-guide-tool)
+[![Version](https://img.shields.io/badge/version-1.8.0-blue.svg)](https://github.com/alexanderkinging/github-guide-tool)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 [English](README.md) | [中文](README.zh-CN.md)
@@ -14,11 +14,13 @@ GitHub Guide Tool 是一个 Chrome 浏览器插件，可以分析 GitHub 仓库�
 ### 核心特性
 
 - 🚀 **即时分析** - 一键分析任何公开 GitHub 仓库
-- 🤖 **多 AI 服务** - 支持 Claude、OpenAI 和硅基流动
+- 🤖 **多 AI 服务** - 支持 Claude、OpenAI、硅基流动和智谱
+- 🧠 **智能分块** - 自动将大型代码库分块分析，适配不同模型的上下文限制
 - 📊 **智能策略** - 根据项目规模自适应分析深度
 - ⚡ **流式输出** - 实时显示 AI 响应内容
 - 💾 **缓存系统** - 24 小时结果缓存，避免重复 API 调用
 - 📄 **Markdown 导出** - 导出分析结果为 Markdown 文件
+- 🔒 **私���仓库** - 支持使用 GitHub Token 分析私有仓库
 
 ## 🎯 工作原理
 
@@ -157,7 +159,19 @@ npm run lint
 
 ## 📋 版本规划
 
-### v1.0.0 (当前版本) ✅
+### v1.8.0 (当前版本) ✅
+- [x] 智能分块分析，支持大型代码库
+- [x] Token 预估和模型上下文限制映射
+- [x] 多轮分析与结构化摘要
+- [x] 分块分析进度显示
+
+### v1.5.0 - v1.7.0 ✅
+- [x] 私有仓库支持
+- [x] 多语言代码骨架提取（Go、Rust、Java、C++）
+- [x] 自定义 Prompt 模板
+- [x] 智谱 AI 服务支持
+
+### v1.0.0 ✅
 - [x] Chrome 插件基础框架
 - [x] GitHub API 集成
 - [x] 代码骨架提取（JS/TS/Python）
@@ -166,12 +180,6 @@ npm run lint
 - [x] Markdown 导出
 - [x] 缓存系统
 - [x] 内存优化
-
-### v1.1.0 (计划中)
-- [ ] 私有仓库支持
-- [ ] 更多语言支持（Go、Rust、Java、C++）
-- [ ] 分析历史记录
-- [ ] 自定义 Prompt 模板
 
 ### v2.0.0 (未来)
 - [ ] 交互式问答模式

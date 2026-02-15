@@ -10,6 +10,7 @@ import type {
   DependencyInfo,
   ProjectSize,
   AnalysisConfig,
+  AnalysisMode,
 } from '@/types';
 import { githubAPI } from '@/lib/github';
 
@@ -91,15 +92,26 @@ export function determineProjectSize(fileCount: number): ProjectSize {
   return 'large';
 }
 
-export function getAnalysisConfig(size: ProjectSize): AnalysisConfig {
-  switch (size) {
-    case 'small':
-      return { projectSize: size, maxFilesToAnalyze: 50, includeFullContent: true };
-    case 'medium':
-      return { projectSize: size, maxFilesToAnalyze: 30, includeFullContent: false };
-    case 'large':
-      return { projectSize: size, maxFilesToAnalyze: 15, includeFullContent: false };
+export function getAnalysisConfig(size: ProjectSize, mode: AnalysisMode = 'default'): AnalysisConfig {
+  if (mode === 'full') {
+    // Full analysis: no limits
+    return {
+      projectSize: size,
+      maxFilesToAnalyze: 9999,
+      includeFullContent: true,
+      maxReadmeLength: 0, // 0 means no limit
+      analysisMode: 'full',
+    };
   }
+
+  // Default analysis: improved limits
+  return {
+    projectSize: size,
+    maxFilesToAnalyze: 100,
+    includeFullContent: size === 'small',
+    maxReadmeLength: 4000,
+    analysisMode: 'default',
+  };
 }
 
 function buildDirectoryTree(nodes: FileNode[]): DirectoryTree {
@@ -649,13 +661,14 @@ function extractDependencies(config: ProjectConfig | null): DependencyInfo {
 
 export async function extractCodeSkeleton(
   repoInfo: RepoInfo,
-  onProgress?: (stage: string, progress: number) => void
+  onProgress?: (stage: string, progress: number) => void,
+  mode: AnalysisMode = 'default'
 ): Promise<CodeSkeleton> {
   const { owner, repo, fileTree, fileCount } = repoInfo;
 
   // Determine project size and analysis config
   const projectSize = determineProjectSize(fileCount);
-  const analysisConfig = getAnalysisConfig(projectSize);
+  const analysisConfig = getAnalysisConfig(projectSize, mode);
 
   onProgress?.('Building directory structure', 10);
 
@@ -717,7 +730,11 @@ export async function extractCodeSkeleton(
   };
 }
 
-export function formatSkeletonForAI(skeleton: CodeSkeleton, repoInfo: RepoInfo): string {
+export function formatSkeletonForAI(
+  skeleton: CodeSkeleton,
+  repoInfo: RepoInfo,
+  maxReadmeLength: number = 4000
+): string {
   const lines: string[] = [];
 
   // Project info
@@ -810,9 +827,10 @@ export function formatSkeletonForAI(skeleton: CodeSkeleton, repoInfo: RepoInfo):
   // README excerpt
   if (repoInfo.readme) {
     lines.push('## README (excerpt)');
-    const readmeExcerpt = repoInfo.readme.substring(0, 2000);
+    const limit = maxReadmeLength > 0 ? maxReadmeLength : 2000;
+    const readmeExcerpt = repoInfo.readme.substring(0, limit);
     lines.push(readmeExcerpt);
-    if (repoInfo.readme.length > 2000) {
+    if (repoInfo.readme.length > limit) {
       lines.push('\n... (truncated)');
     }
   }
