@@ -49,6 +49,7 @@ export default function Analysis({ owner, repo, settings }: AnalysisProps) {
   const [analysis, setAnalysis] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [cached, setCached] = useState(false);
+  const [feishuSaving, setFeishuSaving] = useState(false);
   const analysisRef = useRef<HTMLDivElement>(null);
 
   // Check for cached analysis on mount
@@ -206,6 +207,46 @@ export default function Analysis({ owner, repo, settings }: AnalysisProps) {
     await navigator.clipboard.writeText(analysis);
   };
 
+  const saveToFeishu = async () => {
+    if (!analysis || feishuSaving) return;
+
+    setFeishuSaving(true);
+    setError(null);
+
+    try {
+      // Check login status first
+      const loginCheck = await chrome.runtime.sendMessage({
+        type: 'CHECK_FEISHU_LOGIN',
+      });
+
+      if (!loginCheck.success || !loginCheck.data?.isLoggedIn) {
+        setError('请先登录 feishu.cn');
+        return;
+      }
+
+      // Save to Feishu
+      const result = await chrome.runtime.sendMessage({
+        type: 'SAVE_TO_FEISHU',
+        payload: {
+          markdown: analysis,
+          title: `${owner}/${repo} 项目分析`,
+          sourceUrl: `https://github.com/${owner}/${repo}`,
+        },
+      });
+
+      if (result.success && result.url) {
+        // Open the created document
+        window.open(result.url, '_blank');
+      } else {
+        setError(result.error || '保存到飞书失败');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '保存到飞书失败');
+    } finally {
+      setFeishuSaving(false);
+    }
+  };
+
   const projectSize = repoInfo ? determineProjectSize(repoInfo.fileCount) : null;
 
   return (
@@ -332,6 +373,16 @@ export default function Analysis({ owner, repo, settings }: AnalysisProps) {
               title="Export as Markdown"
             >
               💾
+            </button>
+            <button
+              onClick={saveToFeishu}
+              disabled={feishuSaving}
+              className={`px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 ${
+                feishuSaving ? 'opacity-50 cursor-not-allowed' : ''
+              }`}
+              title="保存到飞书文档"
+            >
+              {feishuSaving ? '⏳' : '📄'}
             </button>
           </>
         ) : (
