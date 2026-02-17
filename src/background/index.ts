@@ -60,15 +60,41 @@ function generateRequestId(): string {
   });
 }
 
+// HTML escape function to prevent XSS
+function escapeHtml(text: string): string {
+  const map: Record<string, string> = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  };
+  return text.replace(/[&<>"']/g, (char) => map[char]);
+}
+
+// URL validation to prevent javascript: protocol injection
+function isSafeUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url, 'https://example.com');
+    return ['http:', 'https:'].includes(parsed.protocol);
+  } catch {
+    return url.startsWith('/') || url.startsWith('#');
+  }
+}
+
 // Convert Markdown to HTML
 function markdownToHtml(markdown: string): string {
   // Normalize line endings and trim
   let html = markdown.replace(/\r\n/g, '\n').trim();
 
-  // Code blocks (preserve content, process first)
+  // SECURITY: First escape ALL HTML to prevent XSS from raw HTML tags
+  // This must happen before any Markdown processing
+  html = escapeHtml(html);
+
+  // Code blocks (content already escaped above)
   html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="language-$1">$2</code></pre>');
 
-  // Headers
+  // Headers (content already escaped)
   html = html.replace(/^###### (.+)$/gm, '<h6>$1</h6>');
   html = html.replace(/^##### (.+)$/gm, '<h5>$1</h5>');
   html = html.replace(/^#### (.+)$/gm, '<h4>$1</h4>');
@@ -76,26 +102,38 @@ function markdownToHtml(markdown: string): string {
   html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
   html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
 
-  // Bold and italic
+  // Bold and italic (content already escaped)
   html = html.replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>');
   html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
 
-  // Inline code
+  // Inline code (content already escaped)
   html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
 
-  // Links
-  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+  // Links - validate URL (text already escaped, URL needs unescaping for validation then re-escaping)
+  html = html.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, text, escapedUrl) => {
+    // Unescape URL for validation (it was escaped above)
+    const url = escapedUrl
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'");
+    if (!isSafeUrl(url)) {
+      return text; // Return plain text if URL is unsafe
+    }
+    return `<a href="${escapedUrl}">${text}</a>`;
+  });
 
-  // Unordered lists - collect consecutive items
+  // Unordered lists (content already escaped)
   html = html.replace(/^- (.+)$/gm, '<li>$1</li>');
   html = html.replace(/(<li>.*<\/li>\n?)+/g, (match) => `<ul>${match.replace(/\n/g, '')}</ul>`);
 
-  // Ordered lists
+  // Ordered lists (content already escaped)
   html = html.replace(/^\d+\. (.+)$/gm, '<li>$1</li>');
 
-  // Blockquotes
-  html = html.replace(/^> (.+)$/gm, '<blockquote>$1</blockquote>');
+  // Blockquotes (content already escaped)
+  html = html.replace(/^&gt; (.+)$/gm, '<blockquote>$1</blockquote>');
 
   // Horizontal rules
   html = html.replace(/^---$/gm, '<hr>');
@@ -130,6 +168,21 @@ function markdownToHtml(markdown: string): string {
     .replace(/<br><\/p>/g, '</p>');
 
   return html;
+}
+
+// Validate Feishu document URL - only allow https and feishu.cn domains
+function isValidFeishuUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:') {
+      return false;
+    }
+    // Allow *.feishu.cn domains
+    const hostname = parsed.hostname.toLowerCase();
+    return hostname === 'feishu.cn' || hostname.endsWith('.feishu.cn');
+  } catch {
+    return false;
+  }
 }
 
 // Save to Feishu document
@@ -210,6 +263,10 @@ async function pollFeishuClipResult(ticket: string, csrfToken: string): Promise<
       const result = await response.json();
 
       if (result.code === 0 && result.docUrl && result.status === 'success') {
+        // Validate URL before returning
+        if (!isValidFeishuUrl(result.docUrl)) {
+          return { success: false, error: '返回的文档链接不安全' };
+        }
         return { success: true, url: result.docUrl };
       }
 
@@ -222,6 +279,10 @@ async function pollFeishuClipResult(ticket: string, csrfToken: string): Promise<
       }
 
       if (result.code === 0 && result.data && result.data.url) {
+        // Validate URL before returning
+        if (!isValidFeishuUrl(result.data.url)) {
+          return { success: false, error: '返回的文档链接不安全' };
+        }
         return { success: true, url: result.data.url };
       }
     } catch (err) {
@@ -731,8 +792,18 @@ async function runAnalysis(owner: string, repo: string): Promise<void> {
   }
 }
 
+// Validate message sender to ensure it's from the same extension
+function validateSender(sender: chrome.runtime.MessageSender): boolean {
+  return sender.id === chrome.runtime.id;
+}
+
 // Message handler
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Validate sender - only allow messages from the same extension
+  if (!validateSender(sender)) {
+    sendResponse({ success: false, error: 'Unauthorized' });
+    return true;
+  }
   handleMessage(message, sendResponse);
   return true; // Keep channel open for async response
 });

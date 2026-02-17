@@ -305,8 +305,8 @@ export default function Analysis({ owner, repo, settings: _settings, onOpenSetti
       });
 
       if (result.success && result.url) {
-        // Open the created document
-        window.open(result.url, '_blank');
+        // Open the created document with security attributes
+        window.open(result.url, '_blank', 'noopener,noreferrer');
       } else {
         setLocalError(result.error || '保存到飞书失败');
       }
@@ -397,7 +397,7 @@ export default function Analysis({ owner, repo, settings: _settings, onOpenSetti
                 </button>
               )}
               <button
-                onClick={() => window.open(GITHUB_TOKEN_URL, '_blank')}
+                onClick={() => window.open(GITHUB_TOKEN_URL, '_blank', 'noopener,noreferrer')}
                 className="text-blue-600 hover:underline text-xs"
               >
                 → 创建 Token

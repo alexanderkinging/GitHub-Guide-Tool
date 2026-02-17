@@ -245,7 +245,7 @@ export default function Settings({ settings, onSave, onCancel }: SettingsProps) 
         {/* Create Token Button */}
         <button
           type="button"
-          onClick={() => window.open(GITHUB_TOKEN_URL, '_blank')}
+          onClick={() => window.open(GITHUB_TOKEN_URL, '_blank', 'noopener,noreferrer')}
           className="mt-2 text-xs text-blue-600 hover:underline"
         >
           → 创建 GitHub Token（需要 repo 权限）
