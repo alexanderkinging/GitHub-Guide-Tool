@@ -1,6 +1,6 @@
 {
   "name": "github-guide-tool",
-  "version": "1.11.0",
+  "version": "1.14.1",
   "description": "A Chrome extension that analyzes GitHub repositories and generates AI-powered project documentation",
   "author": "Alexander King",
   "license": "MIT",

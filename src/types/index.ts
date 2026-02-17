@@ -180,6 +180,19 @@ export interface AnalysisTask {
   lastUpdatedAt: number;
 }
 
+// History Entry (lightweight, ~1-2KB per entry)
+export interface HistoryEntry {
+  repoKey: string;           // "owner/repo"
+  owner: string;
+  repo: string;
+  language: string;          // Primary language
+  description: string;       // Repo description (truncated to 100 chars)
+  summary: string;           // AI analysis summary (first 200 chars)
+  analyzedAt: number;        // Analysis timestamp
+  stars: number;
+  isPrivate: boolean;
+}
+
 // Message Types for Chrome Extension
 export type MessageType =
   | 'GET_REPO_INFO'
@@ -189,7 +202,18 @@ export type MessageType =
   | 'CLEAR_CACHE'
   | 'START_ANALYSIS'
   | 'GET_ANALYSIS_STATE'
-  | 'CANCEL_ANALYSIS';
+  | 'CANCEL_ANALYSIS'
+  | 'GET_HISTORY'
+  | 'GET_HISTORY_ENTRY'
+  | 'DELETE_HISTORY_ENTRY'
+  | 'CLEAR_HISTORY'
+  | 'EXTRACT_SKELETON'
+  | 'CHECK_CACHE'
+  | 'SAVE_CACHE'
+  | 'REPO_PAGE_DETECTED'
+  | 'CHECK_FEISHU_LOGIN'
+  | 'SAVE_TO_FEISHU'
+  | 'GET_CURRENT_REPO';
 
 export interface ExtensionMessage {
   type: MessageType;

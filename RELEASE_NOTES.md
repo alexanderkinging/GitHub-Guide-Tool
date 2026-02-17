@@ -20,7 +20,7 @@
   - Medium projects (50-200 files): Standard analysis
   - Large projects (>200 files): Quick overview
 - ⚡ **Real-time Streaming** - Watch AI generate analysis in real-time
-- 💾 **Smart Caching** - 24-hour cache to save API calls
+- 💾 **Smart Caching** - 7-day cache to save API calls
 - 📄 **Markdown Export** - Export results as `.md` files
 
 ### Performance & Optimization

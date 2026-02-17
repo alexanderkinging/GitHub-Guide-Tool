@@ -1,12 +1,20 @@
 interface HeaderProps {
   onSettingsClick: () => void;
   onPromptsClick: () => void;
+  onHistoryClick: () => void;
   isSettingsView: boolean;
   isPromptsView: boolean;
+  isHistoryView: boolean;
 }
 
-export default function Header({ onSettingsClick, onPromptsClick, isSettingsView, isPromptsView }: HeaderProps) {
-  const isSubView = isSettingsView || isPromptsView;
+export default function Header({ onSettingsClick, onPromptsClick, onHistoryClick, isSettingsView, isPromptsView, isHistoryView }: HeaderProps) {
+  const isSubView = isSettingsView || isPromptsView || isHistoryView;
+
+  const handleBackClick = () => {
+    if (isSettingsView) onSettingsClick();
+    else if (isPromptsView) onPromptsClick();
+    else if (isHistoryView) onHistoryClick();
+  };
 
   return (
     <div className="flex items-center justify-between p-4 border-b border-gray-200">
@@ -19,7 +27,7 @@ export default function Header({ onSettingsClick, onPromptsClick, isSettingsView
       <div className="flex items-center gap-1">
         {isSubView ? (
           <button
-            onClick={isSettingsView ? onSettingsClick : onPromptsClick}
+            onClick={handleBackClick}
             className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
             title="Back"
           >
@@ -29,6 +37,15 @@ export default function Header({ onSettingsClick, onPromptsClick, isSettingsView
           </button>
         ) : (
           <>
+            <button
+              onClick={onHistoryClick}
+              className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+              title="History"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+            </button>
             <button
               onClick={onPromptsClick}
               className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"

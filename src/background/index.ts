@@ -1,11 +1,11 @@
-import type { StorageSettings, CachedAnalysis, AnalysisTask, ChunkedAnalysisProgress } from '@/types';
+import type { StorageSettings, CachedAnalysis, AnalysisTask, ChunkedAnalysisProgress, HistoryEntry } from '@/types';
 import { githubAPI } from '@/lib/github';
 import { extractCodeSkeleton } from '@/lib/analyzer';
 import { analyzeWithAI, checkNeedsChunking, analyzeWithChunking } from '@/lib/ai';
 import { getTemplateById } from '@/lib/prompts/presets';
 
-// Cache duration: 24 hours
-const CACHE_DURATION = 24 * 60 * 60 * 1000;
+// Cache duration: 7 days
+const CACHE_DURATION = 7 * 24 * 60 * 60 * 1000;
 
 // Storage limit: 4.5MB (leaving some buffer from 5MB limit)
 const MAX_STORAGE_BYTES = 4.5 * 1024 * 1024;
@@ -14,13 +14,20 @@ const MAX_STORAGE_BYTES = 4.5 * 1024 * 1024;
 const SETTINGS_KEY = 'settings';
 const CACHE_KEY = 'analysisCache';
 const ANALYSIS_STATE_KEY = 'analysisTaskState';
+const HISTORY_KEY = 'analysisHistory';
+
+// History settings
+const MAX_HISTORY_ENTRIES = 100;
 
 // Analysis task management
 const ANALYSIS_TIMEOUT = 5 * 60 * 1000; // 5 minutes
 const THROTTLE_INTERVAL = 500; // 500ms
+const TASK_CLEANUP_DELAY = 5 * 60 * 1000; // 5 minutes after completion
+const MAX_CONCURRENT_TASKS = 3;
 
-let currentTask: AnalysisTask | null = null;
-let lastSaveTime = 0;
+// Multi-task support: Map of taskId -> AnalysisTask
+const activeTasks = new Map<string, AnalysisTask>();
+const lastSaveTimes = new Map<string, number>();
 
 // Feishu API
 const FEISHU_API_BASE = 'https://internal-api-space.feishu.cn';
@@ -329,33 +336,127 @@ async function clearCache(): Promise<void> {
   await chrome.storage.local.remove(CACHE_KEY);
 }
 
+// ============ History Management ============
+
+// Extract summary with smart sentence boundary detection
+function extractSummary(text: string, minLength = 400, maxLength = 500): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  // Find the last sentence ender within maxLength range
+  const searchRange = text.slice(0, maxLength);
+  const sentenceEnders = /[。！？.!?]/g;
+  let lastEnd = -1;
+  let match;
+
+  while ((match = sentenceEnders.exec(searchRange)) !== null) {
+    if (match.index >= minLength) {
+      lastEnd = match.index;
+    }
+  }
+
+  // If found a sentence ender, cut there
+  if (lastEnd > 0) {
+    return text.slice(0, lastEnd + 1);
+  }
+
+  // Fallback to maxLength
+  return text.slice(0, maxLength);
+}
+
+// Get history list
+async function getHistory(): Promise<HistoryEntry[]> {
+  const result = await chrome.storage.local.get(HISTORY_KEY);
+  return result[HISTORY_KEY] || [];
+}
+
+// Add history entry (called after analysis completes)
+async function addHistoryEntry(
+  repoKey: string,
+  repoInfo: { owner: string; repo: string; language: string; description: string; stars: number; isPrivate: boolean },
+  aiAnalysis: string
+): Promise<void> {
+  const history = await getHistory();
+
+  // Remove existing entry for same repo (will be re-added at top)
+  const filtered = history.filter(h => h.repoKey !== repoKey);
+
+  // Create new entry
+  const entry: HistoryEntry = {
+    repoKey,
+    owner: repoInfo.owner,
+    repo: repoInfo.repo,
+    language: repoInfo.language || 'Unknown',
+    description: (repoInfo.description || '').slice(0, 100),
+    summary: extractSummary(aiAnalysis),
+    analyzedAt: Date.now(),
+    stars: repoInfo.stars,
+    isPrivate: repoInfo.isPrivate,
+  };
+
+  // Add to front
+  filtered.unshift(entry);
+
+  // Limit to max entries
+  const trimmed = filtered.slice(0, MAX_HISTORY_ENTRIES);
+
+  await chrome.storage.local.set({ [HISTORY_KEY]: trimmed });
+}
+
+// Delete single history entry
+async function deleteHistoryEntry(repoKey: string): Promise<void> {
+  const history = await getHistory();
+  const filtered = history.filter(h => h.repoKey !== repoKey);
+  await chrome.storage.local.set({ [HISTORY_KEY]: filtered });
+}
+
+// Clear all history
+async function clearHistory(): Promise<void> {
+  await chrome.storage.local.remove(HISTORY_KEY);
+}
+
 // ============ Analysis Task Management ============
 
-// Save analysis state to session storage (throttled)
+// Save all analysis tasks to session storage (throttled per task)
 async function saveAnalysisState(): Promise<void> {
-  if (!currentTask) return;
+  if (activeTasks.size === 0) return;
 
-  const now = Date.now();
-  if (now - lastSaveTime < THROTTLE_INTERVAL) return;
-
-  lastSaveTime = now;
-  currentTask.lastUpdatedAt = now;
-
-  await chrome.storage.session.set({ [ANALYSIS_STATE_KEY]: currentTask });
+  const tasksObj = Object.fromEntries(activeTasks);
+  await chrome.storage.session.set({ [ANALYSIS_STATE_KEY]: tasksObj });
 }
 
 // Force save analysis state (bypass throttle)
 async function forceSaveAnalysisState(): Promise<void> {
-  if (!currentTask) return;
-  currentTask.lastUpdatedAt = Date.now();
-  lastSaveTime = Date.now();
-  await chrome.storage.session.set({ [ANALYSIS_STATE_KEY]: currentTask });
+  if (activeTasks.size === 0) {
+    await chrome.storage.session.remove(ANALYSIS_STATE_KEY);
+    return;
+  }
+
+  // Update lastUpdatedAt for all tasks
+  const now = Date.now();
+  for (const task of activeTasks.values()) {
+    task.lastUpdatedAt = now;
+  }
+
+  const tasksObj = Object.fromEntries(activeTasks);
+  await chrome.storage.session.set({ [ANALYSIS_STATE_KEY]: tasksObj });
 }
 
-// Get analysis state from session storage
-async function getAnalysisState(): Promise<AnalysisTask | null> {
-  const result = await chrome.storage.session.get(ANALYSIS_STATE_KEY);
-  const task = result[ANALYSIS_STATE_KEY] as AnalysisTask | undefined;
+// Get analysis state for a specific task
+async function getAnalysisState(taskId: string): Promise<AnalysisTask | null> {
+  // First check in-memory
+  let task = activeTasks.get(taskId);
+
+  // If not in memory, try to restore from session storage
+  if (!task) {
+    const result = await chrome.storage.session.get(ANALYSIS_STATE_KEY);
+    const tasksObj = result[ANALYSIS_STATE_KEY] as Record<string, AnalysisTask> | undefined;
+    if (tasksObj && tasksObj[taskId]) {
+      task = tasksObj[taskId];
+      activeTasks.set(taskId, task);
+    }
+  }
 
   if (!task) return null;
 
@@ -364,25 +465,47 @@ async function getAnalysisState(): Promise<AnalysisTask | null> {
     if (Date.now() - task.lastUpdatedAt > ANALYSIS_TIMEOUT) {
       task.stage = 'error';
       task.error = 'Analysis timed out. Please try again.';
-      await chrome.storage.session.set({ [ANALYSIS_STATE_KEY]: task });
-      currentTask = null;
+      await forceSaveAnalysisState();
     }
   }
 
   return task;
 }
 
-// Clear analysis state
-async function clearAnalysisState(): Promise<void> {
-  currentTask = null;
-  await chrome.storage.session.remove(ANALYSIS_STATE_KEY);
+// Clear analysis state for a specific task
+async function clearAnalysisState(taskId: string): Promise<void> {
+  activeTasks.delete(taskId);
+  lastSaveTimes.delete(taskId);
+  await forceSaveAnalysisState();
 }
 
-// Update task state
-function updateTask(updates: Partial<AnalysisTask>): void {
-  if (!currentTask) return;
-  Object.assign(currentTask, updates);
-  saveAnalysisState(); // Throttled save
+// Update task state (throttled save)
+function updateTask(taskId: string, updates: Partial<AnalysisTask>): void {
+  const task = activeTasks.get(taskId);
+  if (!task) return;
+
+  Object.assign(task, updates);
+  task.lastUpdatedAt = Date.now();
+
+  // Throttled save per task
+  const now = Date.now();
+  const lastSave = lastSaveTimes.get(taskId) || 0;
+  if (now - lastSave >= THROTTLE_INTERVAL) {
+    lastSaveTimes.set(taskId, now);
+    saveAnalysisState();
+  }
+}
+
+// Clean up completed tasks after delay
+function scheduleTaskCleanup(taskId: string): void {
+  setTimeout(() => {
+    const task = activeTasks.get(taskId);
+    if (task && (task.stage === 'complete' || task.stage === 'error')) {
+      activeTasks.delete(taskId);
+      lastSaveTimes.delete(taskId);
+      saveAnalysisState();
+    }
+  }, TASK_CLEANUP_DELAY);
 }
 
 // Start analysis in background
@@ -390,13 +513,21 @@ async function startBackgroundAnalysis(owner: string, repo: string): Promise<Ana
   const taskId = `${owner}/${repo}`;
 
   // Check if same task is already running
-  if (currentTask && currentTask.id === taskId &&
-      currentTask.stage !== 'complete' && currentTask.stage !== 'error' && currentTask.stage !== 'idle') {
-    return currentTask;
+  const existing = activeTasks.get(taskId);
+  if (existing && existing.stage !== 'complete' && existing.stage !== 'error' && existing.stage !== 'idle') {
+    return existing;
+  }
+
+  // Check concurrent task limit
+  const runningCount = [...activeTasks.values()]
+    .filter(t => t.stage !== 'complete' && t.stage !== 'error' && t.stage !== 'idle').length;
+
+  if (runningCount >= MAX_CONCURRENT_TASKS) {
+    throw new Error(`最多同时分析 ${MAX_CONCURRENT_TASKS} 个仓库`);
   }
 
   // Initialize new task
-  currentTask = {
+  const task: AnalysisTask = {
     id: taskId,
     owner,
     repo,
@@ -410,19 +541,22 @@ async function startBackgroundAnalysis(owner: string, repo: string): Promise<Ana
     lastUpdatedAt: Date.now(),
   };
 
+  activeTasks.set(taskId, task);
   await forceSaveAnalysisState();
 
   // Run analysis asynchronously
   runAnalysis(owner, repo).catch((err) => {
     console.error('Analysis error:', err);
-    if (currentTask && currentTask.id === taskId) {
+    const currentTask = activeTasks.get(taskId);
+    if (currentTask) {
       currentTask.stage = 'error';
       currentTask.error = err instanceof Error ? err.message : 'Unknown error occurred';
       forceSaveAnalysisState();
+      scheduleTaskCleanup(taskId);
     }
   });
 
-  return currentTask;
+  return task;
 }
 
 // Run the actual analysis
@@ -436,16 +570,16 @@ async function runAnalysis(owner: string, repo: string): Promise<void> {
     githubAPI.setToken(settings.githubToken || null);
 
     // Fetch repo info
-    updateTask({ progress: 10 });
+    updateTask(taskId, { progress: 10 });
     const fetchedRepoInfo = await githubAPI.getRepoInfo(owner, repo);
-    updateTask({ repoInfo: fetchedRepoInfo });
+    updateTask(taskId, { repoInfo: fetchedRepoInfo });
 
     // Extract skeleton
-    updateTask({ stage: 'extracting', progress: 30 });
+    updateTask(taskId, { stage: 'extracting', progress: 30 });
     await forceSaveAnalysisState();
 
     const extractedSkeleton = await extractCodeSkeleton(fetchedRepoInfo, (_stage, p) => {
-      updateTask({ progress: 30 + (p * 0.3) });
+      updateTask(taskId, { progress: 30 + (p * 0.3) });
     });
 
     // Get API key and model
@@ -485,7 +619,7 @@ async function runAnalysis(owner: string, repo: string): Promise<void> {
     );
 
     // Start AI analysis
-    updateTask({ stage: 'analyzing', progress: 60 });
+    updateTask(taskId, { stage: 'analyzing', progress: 60 });
     await forceSaveAnalysisState();
 
     let fullAnalysis = '';
@@ -500,13 +634,13 @@ async function runAnalysis(owner: string, repo: string): Promise<void> {
         fetchedRepoInfo,
         {
           onToken: (token) => {
-            if (currentTask?.id !== taskId) return;
+            if (!activeTasks.has(taskId)) return;
             fullAnalysis += token;
-            updateTask({ analysis: fullAnalysis });
+            updateTask(taskId, { analysis: fullAnalysis });
           },
           onComplete: async (text) => {
-            if (currentTask?.id !== taskId) return;
-            updateTask({
+            if (!activeTasks.has(taskId)) return;
+            updateTask(taskId, {
               analysis: text,
               stage: 'complete',
               progress: 100,
@@ -521,15 +655,21 @@ async function runAnalysis(owner: string, repo: string): Promise<void> {
               aiAnalysis: text,
               generatedAt: Date.now(),
             });
+
+            // Add to history
+            await addHistoryEntry(taskId, fetchedRepoInfo, text);
+
+            // Schedule cleanup
+            scheduleTaskCleanup(taskId);
           },
           onError: (err) => {
             throw err;
           },
         },
         (progress: ChunkedAnalysisProgress) => {
-          if (currentTask?.id !== taskId) return;
+          if (!activeTasks.has(taskId)) return;
           const chunkPercent = (progress.currentChunk / progress.totalChunks) * 100;
-          updateTask({
+          updateTask(taskId, {
             chunkProgress: progress,
             progress: 60 + (chunkPercent * 0.35),
           });
@@ -545,13 +685,13 @@ async function runAnalysis(owner: string, repo: string): Promise<void> {
         fetchedRepoInfo,
         {
           onToken: (token) => {
-            if (currentTask?.id !== taskId) return;
+            if (!activeTasks.has(taskId)) return;
             fullAnalysis += token;
-            updateTask({ analysis: fullAnalysis });
+            updateTask(taskId, { analysis: fullAnalysis });
           },
           onComplete: async (text) => {
-            if (currentTask?.id !== taskId) return;
-            updateTask({
+            if (!activeTasks.has(taskId)) return;
+            updateTask(taskId, {
               analysis: text,
               stage: 'complete',
               progress: 100,
@@ -565,6 +705,12 @@ async function runAnalysis(owner: string, repo: string): Promise<void> {
               aiAnalysis: text,
               generatedAt: Date.now(),
             });
+
+            // Add to history
+            await addHistoryEntry(taskId, fetchedRepoInfo, text);
+
+            // Schedule cleanup
+            scheduleTaskCleanup(taskId);
           },
           onError: (err) => {
             throw err;
@@ -574,10 +720,12 @@ async function runAnalysis(owner: string, repo: string): Promise<void> {
       );
     }
   } catch (err) {
-    if (currentTask?.id === taskId) {
-      currentTask.stage = 'error';
-      currentTask.error = err instanceof Error ? err.message : 'Unknown error occurred';
+    const task = activeTasks.get(taskId);
+    if (task) {
+      task.stage = 'error';
+      task.error = err instanceof Error ? err.message : 'Unknown error occurred';
       await forceSaveAnalysisState();
+      scheduleTaskCleanup(taskId);
     }
     throw err;
   }
@@ -693,23 +841,43 @@ async function handleMessage(
       case 'GET_ANALYSIS_STATE': {
         const { owner, repo } = message.payload as { owner: string; repo: string };
         const taskId = `${owner}/${repo}`;
-        const state = await getAnalysisState();
-        // Only return state if it matches the requested repo
-        if (state && state.id === taskId) {
-          sendResponse({ success: true, data: state });
-        } else {
-          sendResponse({ success: true, data: null });
-        }
+        const state = await getAnalysisState(taskId);
+        sendResponse({ success: true, data: state });
         break;
       }
 
       case 'CANCEL_ANALYSIS': {
         const { owner, repo } = message.payload as { owner: string; repo: string };
         const taskId = `${owner}/${repo}`;
-        if (currentTask && currentTask.id === taskId) {
-          currentTask = null;
-        }
-        await clearAnalysisState();
+        await clearAnalysisState(taskId);
+        sendResponse({ success: true });
+        break;
+      }
+
+      case 'GET_HISTORY': {
+        const history = await getHistory();
+        sendResponse({ success: true, data: history });
+        break;
+      }
+
+      case 'GET_HISTORY_ENTRY': {
+        const { owner, repo } = message.payload as { owner: string; repo: string };
+        const repoKey = `${owner}/${repo}`;
+        const history = await getHistory();
+        const entry = history.find(h => h.repoKey === repoKey) || null;
+        sendResponse({ success: true, data: entry });
+        break;
+      }
+
+      case 'DELETE_HISTORY_ENTRY': {
+        const { repoKey } = message.payload as { repoKey: string };
+        await deleteHistoryEntry(repoKey);
+        sendResponse({ success: true });
+        break;
+      }
+
+      case 'CLEAR_HISTORY': {
+        await clearHistory();
         sendResponse({ success: true });
         break;
       }

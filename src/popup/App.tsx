@@ -3,9 +3,10 @@ import type { StorageSettings } from '@/types';
 import Settings from './components/Settings';
 import Analysis from './components/Analysis';
 import PromptEditor from './components/PromptEditor';
+import History from './components/History';
 import Header from './components/Header';
 
-type View = 'main' | 'settings' | 'prompts';
+type View = 'main' | 'settings' | 'prompts' | 'history';
 
 interface CurrentRepo {
   owner: string;
@@ -79,8 +80,10 @@ export default function App() {
       <Header
         onSettingsClick={() => setView(view === 'settings' ? 'main' : 'settings')}
         onPromptsClick={() => setView(view === 'prompts' ? 'main' : 'prompts')}
+        onHistoryClick={() => setView(view === 'history' ? 'main' : 'history')}
         isSettingsView={view === 'settings'}
         isPromptsView={view === 'prompts'}
+        isHistoryView={view === 'history'}
       />
 
       {error && (
@@ -105,6 +108,13 @@ export default function App() {
         <PromptEditor
           settings={settings!}
           onSave={handleSaveSettings}
+        />
+      ) : view === 'history' ? (
+        <History
+          onSelectRepo={(owner, repo) => {
+            setCurrentRepo({ owner, repo });
+            setView('main');
+          }}
         />
       ) : (
         <div className="p-4">

@@ -12,7 +12,7 @@ import rust from 'react-syntax-highlighter/dist/esm/languages/hljs/rust';
 import java from 'react-syntax-highlighter/dist/esm/languages/hljs/java';
 import cpp from 'react-syntax-highlighter/dist/esm/languages/hljs/cpp';
 import { githubGist } from 'react-syntax-highlighter/dist/esm/styles/hljs';
-import type { StorageSettings, AnalysisResult, AnalysisTask, AnalysisStage } from '@/types';
+import type { StorageSettings, AnalysisResult, AnalysisTask, AnalysisStage, HistoryEntry } from '@/types';
 import { determineProjectSize } from '@/lib/analyzer';
 
 // Register only needed languages
@@ -83,11 +83,13 @@ function getDisplayError(errorMessage: string): string {
 export default function Analysis({ owner, repo, settings: _settings, onOpenSettings }: AnalysisProps) {
   const [task, setTask] = useState<AnalysisTask | null>(null);
   const [cached, setCached] = useState(false);
+  const [historyEntry, setHistoryEntry] = useState<HistoryEntry | null>(null);
   const [feishuSaving, setFeishuSaving] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const analysisRef = useRef<HTMLDivElement>(null);
   const pollingRef = useRef<number | null>(null);
   const lastAnalysisLengthRef = useRef(0);
+  const userScrolledUpRef = useRef(false);
 
   // Derived state from task
   const stage: AnalysisStage = task?.stage || 'idle';
@@ -109,14 +111,15 @@ export default function Analysis({ owner, repo, settings: _settings, onOpenSetti
         const newTask = response.data as AnalysisTask;
         setTask(newTask);
 
-        // Auto-scroll when new content arrives
-        if (newTask.analysis.length > lastAnalysisLengthRef.current && analysisRef.current) {
+        // Auto-scroll only if user hasn't scrolled up
+        if (newTask.analysis.length > lastAnalysisLengthRef.current && analysisRef.current && !userScrolledUpRef.current) {
           analysisRef.current.scrollTop = analysisRef.current.scrollHeight;
         }
         lastAnalysisLengthRef.current = newTask.analysis.length;
 
-        // Stop polling if complete or error
+        // Reset scroll tracking when analysis completes
         if (newTask.stage === 'complete' || newTask.stage === 'error') {
+          userScrolledUpRef.current = false;
           if (pollingRef.current) {
             clearInterval(pollingRef.current);
             pollingRef.current = null;
@@ -189,6 +192,17 @@ export default function Analysis({ owner, repo, settings: _settings, onOpenSetti
             lastUpdatedAt: cachedResult.generatedAt,
           });
           setCached(true);
+          return;
+        }
+
+        // Finally check history for expired cache fallback
+        const historyResponse = await chrome.runtime.sendMessage({
+          type: 'GET_HISTORY_ENTRY',
+          payload: { owner, repo },
+        });
+
+        if (isMounted && historyResponse.success && historyResponse.data) {
+          setHistoryEntry(historyResponse.data as HistoryEntry);
         }
       } catch (err) {
         if (isMounted) {
@@ -207,6 +221,7 @@ export default function Analysis({ owner, repo, settings: _settings, onOpenSetti
 
   const startAnalysis = async () => {
     setCached(false);
+    setHistoryEntry(null);
     setLocalError(null);
     lastAnalysisLengthRef.current = 0;
 
@@ -392,6 +407,49 @@ export default function Analysis({ owner, repo, settings: _settings, onOpenSetti
         </div>
       )}
 
+      {/* History Summary Card (when cache expired but history exists) */}
+      {historyEntry && !task && (
+        <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg space-y-3">
+          <div className="flex items-center gap-2 text-amber-800">
+            <span className="text-lg">📋</span>
+            <span className="font-medium">历史分析记录</span>
+          </div>
+
+          <div className="flex items-center gap-3 text-sm text-gray-600">
+            <span>⭐ {historyEntry.stars.toLocaleString()}</span>
+            <span>{historyEntry.language}</span>
+            <span className={`px-1.5 py-0.5 rounded text-xs ${
+              historyEntry.isPrivate
+                ? 'bg-yellow-100 text-yellow-700'
+                : 'bg-green-100 text-green-700'
+            }`}>
+              {historyEntry.isPrivate ? '私有' : '公开'}
+            </span>
+          </div>
+
+          <div className="text-sm text-gray-700">
+            <div className="text-xs text-gray-500 mb-1">摘要:</div>
+            <p className="line-clamp-3">{historyEntry.summary}...</p>
+          </div>
+
+          <div className="text-xs text-gray-500">
+            上次分析: {new Date(historyEntry.analyzedAt).toLocaleString('zh-CN')}
+          </div>
+
+          <div className="flex items-center gap-2 text-xs text-amber-700 bg-amber-100 px-2 py-1 rounded">
+            <span>⚠️</span>
+            <span>缓存已过期，显示的是历史摘要</span>
+          </div>
+
+          <button
+            onClick={startAnalysis}
+            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium text-sm"
+          >
+            🔄 重新分析获取完整内容
+          </button>
+        </div>
+      )}
+
       {/* Analysis Result */}
       {analysis && (
         <div className="space-y-2">
@@ -409,6 +467,11 @@ export default function Analysis({ owner, repo, settings: _settings, onOpenSetti
           <div
             ref={analysisRef}
             className="markdown-body p-4 bg-gray-50 rounded-lg max-h-[350px] overflow-y-auto"
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              const isNearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
+              userScrolledUpRef.current = !isNearBottom;
+            }}
           >
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
@@ -438,57 +501,59 @@ export default function Analysis({ owner, repo, settings: _settings, onOpenSetti
         </div>
       )}
 
-      {/* Action Buttons */}
-      <div className="flex gap-2">
-        {stage === 'idle' || stage === 'error' ? (
-          <button
-            onClick={startAnalysis}
-            className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
-          >
-            Analyze Repository
-          </button>
-        ) : stage === 'complete' ? (
-          <>
+      {/* Action Buttons (hidden when showing history card) */}
+      {!(historyEntry && !task) && (
+        <div className="flex gap-2">
+          {stage === 'idle' || stage === 'error' ? (
             <button
               onClick={startAnalysis}
-              className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium"
+              className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
             >
-              Re-analyze
+              Analyze Repository
             </button>
+          ) : stage === 'complete' ? (
+            <>
+              <button
+                onClick={startAnalysis}
+                className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 font-medium"
+              >
+                Re-analyze
+              </button>
+              <button
+                onClick={copyToClipboard}
+                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                title="Copy to clipboard"
+              >
+                📋
+              </button>
+              <button
+                onClick={exportMarkdown}
+                className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
+                title="Export as Markdown"
+              >
+                💾
+              </button>
+              <button
+                onClick={saveToFeishu}
+                disabled={feishuSaving}
+                className={`px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 ${
+                  feishuSaving ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
+                title="保存到飞书文档"
+              >
+                {feishuSaving ? '⏳' : '📄'}
+              </button>
+            </>
+          ) : (
             <button
-              onClick={copyToClipboard}
-              className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
-              title="Copy to clipboard"
+              disabled
+              className="flex-1 px-4 py-2 bg-gray-300 text-gray-500 rounded-lg cursor-not-allowed font-medium"
             >
-              📋
+              Analyzing...
             </button>
-            <button
-              onClick={exportMarkdown}
-              className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50"
-              title="Export as Markdown"
-            >
-              💾
-            </button>
-            <button
-              onClick={saveToFeishu}
-              disabled={feishuSaving}
-              className={`px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 ${
-                feishuSaving ? 'opacity-50 cursor-not-allowed' : ''
-              }`}
-              title="保存到飞书文档"
-            >
-              {feishuSaving ? '⏳' : '📄'}
-            </button>
-          </>
-        ) : (
-          <button
-            disabled
-            className="flex-1 px-4 py-2 bg-gray-300 text-gray-500 rounded-lg cursor-not-allowed font-medium"
-          >
-            Analyzing...
-          </button>
-        )}
-      </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

@@ -26,7 +26,7 @@ export default function PromptEditor({ settings, onSave }: PromptEditorProps) {
       setEditingTemplate({ ...currentTemplate });
       setHasChanges(false);
     }
-  }, [selectedId]);
+  }, [selectedId, currentTemplate]);
 
   // Initialize editing template
   useEffect(() => {
